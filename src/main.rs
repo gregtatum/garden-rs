@@ -6,8 +6,9 @@ use serde::{
 };
 use std::fmt;
 
-#[derive(Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct BlockChain {
+    pub proof_of_work_size: usize,
     pub blocks: Vec<Block>,
 }
 
@@ -26,6 +27,24 @@ pub struct Hash(pub [u8; 32]);
 impl Hash {
     pub fn new() -> Self {
         Hash([0; 32])
+    }
+
+    pub fn meets_proof_of_work(&self, proof_of_work_size: usize) -> bool {
+        for i in 0..proof_of_work_size {
+            if self.0[i] != 0 {
+                return false;
+            }
+        }
+        true
+    }
+
+    pub fn is_root(&self) -> bool {
+        for byte in self.0 {
+            if byte != 0 {
+                return false;
+            }
+        }
+        true
     }
 }
 
@@ -89,53 +108,179 @@ impl fmt::Display for Hash {
     }
 }
 
+#[derive(Debug)]
+pub enum ForeignBlocksError {
+    NoMatchingParent,
+    ShorterForeignBlocks,
+    MalformedBlocks,
+}
+
 impl BlockChain {
-    fn new() -> Self {
-        Self { blocks: vec![] }
-    }
-
-    fn add_payload(&mut self, payload: BlockPayload) -> &Block {
-        self.blocks.push(Block {
-            hash: payload.hash(),
-            payload: payload,
-        });
-        self.blocks.last().unwrap()
-    }
-
-    pub fn add(&mut self, data: Vec<u8>) -> &Block {
-        let prev_block = match self.blocks.last() {
-            Some(block) => block,
-            None => self.add_payload(BlockPayload {
-                previous_hash: Hash([0; 32]),
-                id: 0,
-                timestamp: Utc::now().timestamp(),
-                data: Vec::new(),
-            }),
+    fn new(proof_of_work_size: usize) -> Self {
+        let mut block_chain = Self {
+            proof_of_work_size,
+            blocks: vec![],
         };
-        let payload = BlockPayload {
-            previous_hash: prev_block.hash.clone(),
-            id: prev_block.payload.id + 1,
+
+        // Ensure there is always a root block.
+        block_chain.add_payload_impl(BlockPayload {
+            parent: Hash([0; 32]),
+            timestamp: Utc::now().timestamp(),
+            data: Vec::new(),
+            proof_of_work: 0,
+        });
+
+        block_chain
+    }
+
+    fn add_payload_impl(&mut self, mut payload: BlockPayload) {
+        loop {
+            let hash = payload.hash();
+            if hash.meets_proof_of_work(self.proof_of_work_size) {
+                self.blocks.push(Block {
+                    hash: payload.hash(),
+                    payload: payload,
+                });
+                return;
+            }
+            payload.proof_of_work += 1;
+        }
+    }
+
+    pub fn add_data(&mut self, data: Vec<u8>) {
+        self.add_payload_impl(BlockPayload {
+            parent: self.tip().hash.clone(),
             timestamp: Utc::now().timestamp(),
             data,
-        };
-        self.add_payload(payload)
+            proof_of_work: 0,
+        });
     }
+
+    pub fn tip(&self) -> &Block {
+        self.blocks.last().expect("Unable to find a root block.")
+    }
+
+    pub fn hash_to_block_index(&self, hash: &Hash) -> Option<usize> {
+        for (block_index, block) in self.blocks.iter().rev().enumerate() {
+            if block.hash == *hash {
+                return Some(self.blocks.len() - block_index - 1);
+            }
+        }
+        None
+    }
+
+    pub fn reconcile(&mut self, mut foreign_blocks: &[Block]) -> Result<(), ForeignBlocksError> {
+        if foreign_blocks.is_empty() {
+            // No blocks to add. This is weird, but fine.
+            return Ok(());
+        }
+
+        if foreign_blocks.first().unwrap().payload.parent.is_root() {
+            // The first block appears to be a root block, ignore it.
+            foreign_blocks = &foreign_blocks[1..];
+        }
+
+        // Try to find the parent block.
+        let parent_block_index = {
+            let result = self.hash_to_block_index(&foreign_blocks.first().unwrap().payload.parent);
+            println!("hash_to_block_index: {:?}", result);
+            if result.is_none() {
+                return Err(ForeignBlocksError::NoMatchingParent);
+            }
+            result.unwrap()
+        };
+
+        // Fast forward through blocks that share the common roots.
+        let mut last_trusted_index = parent_block_index;
+        for index in (parent_block_index + 1)..self.blocks.len() {
+            let trusted_block = self.blocks.get(index).unwrap();
+            let foreign_block = foreign_blocks.get(index - parent_block_index - 1).unwrap();
+
+            println!("for index: {}", index);
+            println!("trusted: {:?}", trusted_block.parse_data_as_utf8().unwrap());
+            println!(
+                "foreign_block: {:?}",
+                foreign_block.parse_data_as_utf8().unwrap()
+            );
+
+            if trusted_block == foreign_block {
+                println!("for match");
+                last_trusted_index = index;
+            } else {
+                println!("for break");
+                break;
+            }
+        }
+
+        let new_foreign_block_base_index = last_trusted_index - parent_block_index;
+        let trusted_len = self.blocks.len() - last_trusted_index - 1;
+        let foreign_len = foreign_blocks.len() - (last_trusted_index - parent_block_index);
+
+        if trusted_len > foreign_len {
+            return Err(ForeignBlocksError::ShorterForeignBlocks);
+        }
+
+        let last_trusted_block = self.blocks.get(last_trusted_index).unwrap();
+        let new_foreign_blocks = &foreign_blocks[new_foreign_block_base_index..];
+
+        println!("parent_block_index {:?}", parent_block_index);
+        println!("foreign_blocks {:#?}", debug_blocks(foreign_blocks));
+        println!(
+            "last_trusted_block {:#?}",
+            last_trusted_block.parse_data_as_utf8().unwrap()
+        );
+        println!("new_foreign_blocks {:#?}", debug_blocks(new_foreign_blocks));
+        println!("trusted_len {:#?}", trusted_len);
+        println!("foreign_len {:#?}", foreign_len);
+
+        if !verify_blocks(new_foreign_blocks, last_trusted_block.hash.clone()) {
+            return Err(ForeignBlocksError::MalformedBlocks);
+        }
+
+        self.blocks.truncate(last_trusted_index + 1);
+        self.blocks.extend_from_slice(new_foreign_blocks);
+
+        println!("final blocks {:#?}", debug_blocks(&self.blocks));
+
+        Ok(())
+    }
+}
+
+fn debug_blocks(blocks: &[Block]) -> Vec<&str> {
+    blocks
+        .iter()
+        .map(|b| b.parse_data_as_utf8().unwrap())
+        .collect::<Vec<&str>>()
+}
+
+fn verify_blocks(blocks: &[Block], mut parent: Hash) -> bool {
+    for block in blocks {
+        if block.payload.parent != parent {
+            return false;
+        }
+        let hash = block.payload.hash();
+        if block.hash != hash {
+            return false;
+        }
+        parent = hash;
+    }
+    true
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Eq, Hash)]
 pub struct BlockPayload {
-    pub id: u32,
-    pub previous_hash: Hash,
+    pub parent: Hash,
     pub timestamp: i64,
     pub data: Vec<u8>,
+    pub proof_of_work: u64,
 }
 
 impl BlockPayload {
     fn hash(&self) -> Hash {
         let mut context = Context::new(&SHA256);
-        context.update(&self.id.to_le_bytes());
-        context.update(&self.previous_hash.0);
+        context.update(&self.parent.0);
         context.update(&self.timestamp.to_le_bytes());
+        context.update(&self.proof_of_work.to_le_bytes());
         context.update(&self.data);
         let digest = context.finish();
         let data: &[u8] = digest.as_ref();
@@ -148,15 +293,201 @@ impl BlockPayload {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
 pub struct Block {
     pub hash: Hash,
     pub payload: BlockPayload,
 }
 
+impl Block {
+    fn parse_data_as_utf8(&self) -> Result<&str, std::str::Utf8Error> {
+        std::str::from_utf8(&self.payload.data)
+    }
+}
+
 fn main() {
-    let mut block_chain = BlockChain::new();
-    block_chain.add("First block".into());
-    block_chain.add("Second block".into());
+    let mut block_chain = BlockChain::new(2);
+
+    let start = std::time::Instant::now();
+    block_chain.add_data("First block".into());
+    println!("Timing: {:?}", start.elapsed());
+    block_chain.add_data("Second block".into());
+    println!("Timing: {:?}", start.elapsed());
+    block_chain.add_data("Third block".into());
+    println!("Timing: {:?}", start.elapsed());
+
     println!("{:#?}", block_chain);
+
+    for (block_index, block) in block_chain.blocks.iter().enumerate() {
+        println!(
+            "Block {} {:?}",
+            block_index,
+            match std::str::from_utf8(&block.payload.data) {
+                Ok(string) => string,
+                Err(_) => "invalid utf8",
+            }
+        )
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn get_block_text(block_chain: &BlockChain, index: usize) -> &str {
+        block_chain
+            .blocks
+            .get(index)
+            .expect("Failed to get the block at the index.")
+            .parse_data_as_utf8()
+            .expect("Failed to parse the block data as text.")
+    }
+
+    #[test]
+    fn test_blockchain_add_data() {
+        let mut block_chain = BlockChain::new(1);
+
+        block_chain.add_data("First block".into());
+        block_chain.add_data("Second block".into());
+        block_chain.add_data("Third block".into());
+
+        assert_eq!(get_block_text(&block_chain, 0), "");
+        assert_eq!(get_block_text(&block_chain, 1), "First block");
+        assert_eq!(get_block_text(&block_chain, 2), "Second block");
+        assert_eq!(get_block_text(&block_chain, 3), "Third block");
+    }
+
+    #[test]
+    fn test_blockchain_rooted_reconcile() {
+        // This will reconcile a longer blockchain with our shorter one.
+
+        let mut trusted = BlockChain::new(1);
+
+        trusted.add_data("a".into());
+        trusted.add_data("b".into());
+        trusted.add_data("c".into());
+
+        let mut foreign = trusted.clone();
+
+        foreign.add_data("d".into());
+        foreign.add_data("e".into());
+
+        assert_ne!(trusted, foreign, "The two are different");
+
+        trusted
+            .reconcile(&foreign.blocks)
+            .expect("Failed to reconcile blockchains.");
+
+        assert_eq!(trusted, foreign, "The two are equal");
+    }
+
+    #[test]
+    fn test_blockchain_rootless_reconcile() {
+        let mut trusted = BlockChain::new(1);
+
+        trusted.add_data("a".into());
+        trusted.add_data("b".into());
+        trusted.add_data("c".into());
+
+        let mut foreign = trusted.clone();
+
+        foreign.add_data("d".into());
+        foreign.add_data("e".into());
+
+        assert_ne!(trusted, foreign, "The two are different");
+
+        trusted
+            .reconcile(&foreign.blocks[1..])
+            .expect("Failed to reconcile blockchains.");
+
+        assert_eq!(trusted, foreign, "The two are equal");
+        assert_eq!(
+            debug_blocks(&trusted.blocks),
+            vec!["", "a", "b", "c", "d", "e"]
+        );
+    }
+
+    #[test]
+    fn test_blockchain_foreign_wins() {
+        let mut trusted = BlockChain::new(1);
+
+        trusted.add_data("a".into());
+        trusted.add_data("b".into());
+        trusted.add_data("c".into());
+
+        let mut foreign = trusted.clone();
+
+        trusted.add_data("losing".into());
+        foreign.add_data("d".into());
+        foreign.add_data("e".into());
+
+        assert_ne!(trusted, foreign, "The two are different");
+
+        trusted
+            .reconcile(&foreign.blocks[3..])
+            .expect("Failed to reconcile blockchains.");
+
+        assert_eq!(trusted, foreign, "The two are equal");
+
+        assert_eq!(
+            debug_blocks(&trusted.blocks),
+            vec!["", "a", "b", "c", "d", "e"]
+        );
+    }
+
+    #[test]
+    fn test_blockchain_trusting_wins() {
+        let mut trusted = BlockChain::new(1);
+
+        trusted.add_data("a".into());
+        trusted.add_data("b".into());
+        trusted.add_data("c".into());
+
+        let mut foreign = trusted.clone();
+
+        trusted.add_data("d".into());
+        trusted.add_data("e".into());
+        foreign.add_data("losing".into());
+
+        assert_ne!(trusted, foreign, "The two are different");
+
+        trusted
+            .reconcile(&foreign.blocks[3..])
+            .expect("Failed to reconcile blockchains.");
+
+        assert_eq!(trusted, foreign, "The two are equal");
+
+        assert_eq!(
+            debug_blocks(&trusted.blocks),
+            vec!["", "a", "b", "c", "d", "e"]
+        );
+    }
+
+    #[test]
+    fn test_blockchain_failed_reconcile() {
+        let mut trusted = BlockChain::new(1);
+
+        trusted.add_data("a".into());
+        trusted.add_data("b".into());
+        trusted.add_data("c".into());
+
+        let mut foreign = trusted.clone();
+
+        trusted.add_data("d".into());
+        trusted.add_data("e".into());
+        foreign.add_data("losing".into());
+
+        assert_ne!(trusted, foreign, "The two are different");
+
+        trusted
+            .reconcile(&foreign.blocks[3..])
+            .expect("Failed to reconcile blockchains.");
+
+        assert_eq!(trusted, foreign, "The two are equal");
+
+        assert_eq!(
+            debug_blocks(&trusted.blocks),
+            vec!["", "a", "b", "c", "d", "e"]
+        );
+    }
 }
