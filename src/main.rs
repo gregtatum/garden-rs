@@ -108,8 +108,8 @@ impl fmt::Display for Hash {
     }
 }
 
-#[derive(Debug)]
-pub enum ForeignBlocksError {
+#[derive(Debug, PartialEq, Clone)]
+pub enum ReconcileError {
     NoMatchingParent,
     ShorterForeignBlocks,
     MalformedBlocks,
@@ -169,7 +169,7 @@ impl BlockChain {
         None
     }
 
-    pub fn reconcile(&mut self, mut foreign_blocks: &[Block]) -> Result<(), ForeignBlocksError> {
+    pub fn reconcile(&mut self, mut foreign_blocks: &[Block]) -> Result<(), ReconcileError> {
         if foreign_blocks.is_empty() {
             // No blocks to add. This is weird, but fine.
             return Ok(());
@@ -183,9 +183,8 @@ impl BlockChain {
         // Try to find the parent block.
         let parent_block_index = {
             let result = self.hash_to_block_index(&foreign_blocks.first().unwrap().payload.parent);
-            println!("hash_to_block_index: {:?}", result);
             if result.is_none() {
-                return Err(ForeignBlocksError::NoMatchingParent);
+                return Err(ReconcileError::NoMatchingParent);
             }
             result.unwrap()
         };
@@ -196,18 +195,9 @@ impl BlockChain {
             let trusted_block = self.blocks.get(index).unwrap();
             let foreign_block = foreign_blocks.get(index - parent_block_index - 1).unwrap();
 
-            println!("for index: {}", index);
-            println!("trusted: {:?}", trusted_block.parse_data_as_utf8().unwrap());
-            println!(
-                "foreign_block: {:?}",
-                foreign_block.parse_data_as_utf8().unwrap()
-            );
-
             if trusted_block == foreign_block {
-                println!("for match");
                 last_trusted_index = index;
             } else {
-                println!("for break");
                 break;
             }
         }
@@ -217,30 +207,18 @@ impl BlockChain {
         let foreign_len = foreign_blocks.len() - (last_trusted_index - parent_block_index);
 
         if trusted_len > foreign_len {
-            return Err(ForeignBlocksError::ShorterForeignBlocks);
+            return Err(ReconcileError::ShorterForeignBlocks);
         }
 
         let last_trusted_block = self.blocks.get(last_trusted_index).unwrap();
         let new_foreign_blocks = &foreign_blocks[new_foreign_block_base_index..];
 
-        println!("parent_block_index {:?}", parent_block_index);
-        println!("foreign_blocks {:#?}", debug_blocks(foreign_blocks));
-        println!(
-            "last_trusted_block {:#?}",
-            last_trusted_block.parse_data_as_utf8().unwrap()
-        );
-        println!("new_foreign_blocks {:#?}", debug_blocks(new_foreign_blocks));
-        println!("trusted_len {:#?}", trusted_len);
-        println!("foreign_len {:#?}", foreign_len);
-
         if !verify_blocks(new_foreign_blocks, last_trusted_block.hash.clone()) {
-            return Err(ForeignBlocksError::MalformedBlocks);
+            return Err(ReconcileError::MalformedBlocks);
         }
 
         self.blocks.truncate(last_trusted_index + 1);
         self.blocks.extend_from_slice(new_foreign_blocks);
-
-        println!("final blocks {:#?}", debug_blocks(&self.blocks));
 
         Ok(())
     }
@@ -451,15 +429,20 @@ mod test {
 
         assert_ne!(trusted, foreign, "The two are different");
 
-        trusted
-            .reconcile(&foreign.blocks[3..])
-            .expect("Failed to reconcile blockchains.");
-
-        assert_eq!(trusted, foreign, "The two are equal");
+        assert_eq!(
+            trusted
+                .reconcile(&foreign.blocks[3..])
+                .expect_err("Expected an error"),
+            ReconcileError::ShorterForeignBlocks
+        );
 
         assert_eq!(
             debug_blocks(&trusted.blocks),
             vec!["", "a", "b", "c", "d", "e"]
+        );
+        assert_eq!(
+            debug_blocks(&foreign.blocks),
+            vec!["", "a", "b", "c", "losing"]
         );
     }
 
@@ -475,19 +458,21 @@ mod test {
 
         trusted.add_data("d".into());
         trusted.add_data("e".into());
-        foreign.add_data("losing".into());
+        foreign.add_data("D".into());
+        foreign.add_data("E".into());
+        foreign.add_data("F".into());
 
         assert_ne!(trusted, foreign, "The two are different");
 
-        trusted
-            .reconcile(&foreign.blocks[3..])
-            .expect("Failed to reconcile blockchains.");
-
-        assert_eq!(trusted, foreign, "The two are equal");
+        // Carve off the blocks at the end that don't match anymore.
+        let blocks = &foreign.blocks[5..];
+        assert_eq!(debug_blocks(&blocks), vec!["E", "F"]);
 
         assert_eq!(
-            debug_blocks(&trusted.blocks),
-            vec!["", "a", "b", "c", "d", "e"]
+            trusted
+                .reconcile(&blocks)
+                .expect_err("It should have failed."),
+            ReconcileError::NoMatchingParent
         );
     }
 }
