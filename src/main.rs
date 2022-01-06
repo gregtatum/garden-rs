@@ -230,6 +230,7 @@ impl BlockChain {
     }
 }
 
+#[allow(dead_code)] // Useful for debugging, and used in tests.
 fn debug_blocks(blocks: &[Block]) -> Vec<&str> {
     blocks
         .iter()
