@@ -29,13 +29,15 @@ impl Hash {
         Hash([0; 32])
     }
 
+    /// Use the proof of work size to determine how many leading 0 values to use.
     pub fn meets_proof_of_work(&self, proof_of_work_size: usize) -> bool {
         for i in 0..proof_of_work_size {
             if self.0[i] != 0 {
                 return false;
             }
         }
-        true
+        // Ensure that there aren't any additional leading zeros.
+        self.0[proof_of_work_size] != 0
     }
 
     pub fn is_root(&self) -> bool {
@@ -213,7 +215,11 @@ impl BlockChain {
         let last_trusted_block = self.blocks.get(last_trusted_index).unwrap();
         let new_foreign_blocks = &foreign_blocks[new_foreign_block_base_index..];
 
-        if !verify_blocks(new_foreign_blocks, last_trusted_block.hash.clone()) {
+        if !verify_blocks(
+            self.proof_of_work_size,
+            new_foreign_blocks,
+            last_trusted_block.hash.clone(),
+        ) {
             return Err(ReconcileError::MalformedBlocks);
         }
 
@@ -231,7 +237,7 @@ fn debug_blocks(blocks: &[Block]) -> Vec<&str> {
         .collect::<Vec<&str>>()
 }
 
-fn verify_blocks(blocks: &[Block], mut parent: Hash) -> bool {
+fn verify_blocks(proof_of_work_size: usize, blocks: &[Block], mut parent: Hash) -> bool {
     for block in blocks {
         if block.payload.parent != parent {
             return false;
@@ -239,6 +245,11 @@ fn verify_blocks(blocks: &[Block], mut parent: Hash) -> bool {
         let hash = block.payload.hash();
         if block.hash != hash {
             return false;
+        }
+        for i in 0..proof_of_work_size {
+            if block.hash.0[i] != 0 {
+                return false;
+            }
         }
         parent = hash;
     }
@@ -473,6 +484,36 @@ mod test {
                 .reconcile(&blocks)
                 .expect_err("It should have failed."),
             ReconcileError::NoMatchingParent
+        );
+    }
+
+    #[test]
+    fn test_blockchain_no_proof_of_work() {
+        let mut trusted = BlockChain::new(1);
+
+        trusted.add_data("a".into());
+        trusted.add_data("b".into());
+        trusted.add_data("c".into());
+
+        let mut foreign = trusted.clone();
+
+        foreign.add_data("d".into());
+        let mut block_d = foreign.blocks.get_mut(3).unwrap();
+
+        // Do not provide the proof of work for the last block.
+        block_d.payload.proof_of_work = 0;
+        block_d.hash = block_d.payload.hash();
+
+        assert_ne!(trusted, foreign, "The two are different");
+
+        // Carve off the blocks at the end that don't match anymore.
+        assert_eq!(debug_blocks(&foreign.blocks), vec!["", "a", "b", "c", "d"]);
+
+        assert_eq!(
+            trusted
+                .reconcile(&foreign.blocks)
+                .expect_err("It should have failed."),
+            ReconcileError::MalformedBlocks
         );
     }
 }
