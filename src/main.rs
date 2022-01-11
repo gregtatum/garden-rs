@@ -1,4 +1,5 @@
 use chrono::Utc;
+use rayon::prelude::*;
 use ring::digest::{Context, SHA256};
 use serde::{
     de::{self, Visitor},
@@ -135,18 +136,62 @@ impl BlockChain {
         block_chain
     }
 
-    fn add_payload_impl(&mut self, mut payload: BlockPayload) {
-        loop {
-            let hash = payload.hash();
-            if hash.meets_proof_of_work(self.proof_of_work_size) {
-                self.blocks.push(Block {
-                    hash: payload.hash(),
-                    payload: payload,
-                });
-                return;
-            }
-            payload.proof_of_work += 1;
-        }
+    fn add_payload_impl(&mut self, payload: BlockPayload) {
+        std::env::set_var("RAYON_NUM_THREADS", "64");
+
+        let start = std::time::Instant::now();
+        let proof_of_work_size = self.proof_of_work_size;
+        let partial_hash = payload.partial_hash();
+        let payload = (0..u64::MAX)
+            .into_par_iter()
+            .find_map_any(move |proof_of_work| {
+                // In order to make the parallelism faster, use a partially computed hash.
+                let mut partial_hash = partial_hash.clone();
+                partial_hash.update(&proof_of_work.to_le_bytes());
+                let digest = partial_hash.finish();
+                let data: &[u8] = digest.as_ref();
+
+                for index in 0..proof_of_work_size {
+                    if data[index] != 0 {
+                        return None;
+                    }
+                }
+                if data[proof_of_work_size] == 0 {
+                    return None;
+                }
+
+                let mut payload = payload.clone();
+                payload.proof_of_work = proof_of_work;
+                if payload.hash().meets_proof_of_work(proof_of_work_size) {
+                    Some(payload)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+
+        let hash = payload.hash();
+        assert!(
+            hash.meets_proof_of_work(proof_of_work_size),
+            "The hash must meet the proof of work."
+        );
+        self.blocks.push(Block {
+            hash,
+            payload,
+            computation_time: start.elapsed(),
+        });
+
+        // loop {
+        //     let hash = payload.hash();
+        //     if hash.meets_proof_of_work(self.proof_of_work_size) {
+        //         self.blocks.push(Block {
+        //             hash: payload.hash(),
+        //             payload: payload,
+        //         });
+        //         return;
+        //     }
+        //     payload.proof_of_work += 1;
+        // }
     }
 
     pub fn add_data(&mut self, data: Vec<u8>) {
@@ -270,8 +315,8 @@ impl BlockPayload {
         let mut context = Context::new(&SHA256);
         context.update(&self.parent.0);
         context.update(&self.timestamp.to_le_bytes());
-        context.update(&self.proof_of_work.to_le_bytes());
         context.update(&self.data);
+        context.update(&self.proof_of_work.to_le_bytes());
         let digest = context.finish();
         let data: &[u8] = digest.as_ref();
         assert_eq!(data.len(), 32, "Expected the hash to be 32 bytes");
@@ -281,11 +326,21 @@ impl BlockPayload {
         }
         hash
     }
+
+    // In order to speed up the proof of work hashing, only partially do the hashing work.
+    fn partial_hash(&self) -> Context {
+        let mut context = Context::new(&SHA256);
+        context.update(&self.parent.0);
+        context.update(&self.timestamp.to_le_bytes());
+        context.update(&self.data);
+        context
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
 pub struct Block {
     pub hash: Hash,
+    pub computation_time: std::time::Duration,
     pub payload: BlockPayload,
 }
 
@@ -296,7 +351,7 @@ impl Block {
 }
 
 fn main() {
-    let mut block_chain = BlockChain::new(2);
+    let mut block_chain = BlockChain::new(3);
 
     let start = std::time::Instant::now();
     block_chain.add_data("First block".into());
@@ -499,7 +554,7 @@ mod test {
         let mut foreign = trusted.clone();
 
         foreign.add_data("d".into());
-        let mut block_d = foreign.blocks.get_mut(3).unwrap();
+        let mut block_d = foreign.blocks.get_mut(2).unwrap();
 
         // Do not provide the proof of work for the last block.
         block_d.payload.proof_of_work = 0;
