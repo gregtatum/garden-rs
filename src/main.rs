@@ -180,18 +180,6 @@ impl BlockChain {
             payload,
             computation_time: start.elapsed(),
         });
-
-        // loop {
-        //     let hash = payload.hash();
-        //     if hash.meets_proof_of_work(self.proof_of_work_size) {
-        //         self.blocks.push(Block {
-        //             hash: payload.hash(),
-        //             payload: payload,
-        //         });
-        //         return;
-        //     }
-        //     payload.proof_of_work += 1;
-        // }
     }
 
     pub fn add_data(&mut self, data: Vec<u8>) {
