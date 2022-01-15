@@ -4,11 +4,12 @@ use serde::{
 };
 use std::fmt;
 
-/// A representation of a Hash.
+/// A representation of a Hash for use on a blockchain.
 #[derive(PartialEq, Eq, Clone, Hash)]
 pub struct Hash(pub [u8; 32]);
 
 impl Hash {
+    /// Create a new empty Hash.
     pub fn new() -> Self {
         Hash([0; 32])
     }
@@ -24,6 +25,8 @@ impl Hash {
         self.0[proof_of_work_size] != 0
     }
 
+    /// A root hash would be all 0 values. This is a somewhat hacky way to create a root
+    /// block without adding another property to the Block struct.
     pub fn is_root(&self) -> bool {
         for byte in self.0 {
             if byte != 0 {
@@ -40,6 +43,7 @@ impl From<&Hash> for String {
     }
 }
 
+/// Turn a Hash into a human readable string.
 impl Serialize for Hash {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
