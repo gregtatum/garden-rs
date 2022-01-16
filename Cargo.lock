@@ -323,21 +323,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d696c370c750c948ada61c69a0ee2cbbb9c50b1019ddb86d9317157a99c2cae"
 
 [[package]]
-name = "blockchain-rs"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "futures",
- "libp2p",
- "rayon",
- "ring",
- "serde",
- "serde_json",
- "structopt",
- "tokio",
-]
-
-[[package]]
 name = "blocking"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -827,6 +812,23 @@ dependencies = [
  "pin-project-lite 0.2.8",
  "pin-utils",
  "slab",
+]
+
+[[package]]
+name = "garden"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "futures",
+ "libp2p",
+ "num_cpus",
+ "rayon",
+ "ring",
+ "serde",
+ "serde_json",
+ "structopt",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -2900,6 +2902,16 @@ dependencies = [
  "idna",
  "matches",
  "percent-encoding",
+]
+
+[[package]]
+name = "uuid"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc5cf98d8186244414c848017f0e2676b3fcb46807f6668a97dfe67359a3c4b7"
+dependencies = [
+ "getrandom 0.2.3",
+ "serde",
 ]
 
 [[package]]

@@ -1,5 +1,5 @@
 [package]
-name = "blockchain-rs"
+name = "garden"
 version = "0.1.0"
 edition = "2021"
 
@@ -17,3 +17,5 @@ libp2p = {version = "0.41", features = ["tcp-tokio", "mdns"]}
 tokio = { version = "1.0.1", features = ["io-util", "io-std", "macros", "rt", "rt-multi-thread"] }
 futures = {version = "0.3", features = []}
 structopt = "0.3"
+uuid = {version = "0.8", features = ["serde", "v4"]}
+num_cpus = { version = "1.13" }

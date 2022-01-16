@@ -12,6 +12,9 @@ pub enum ReconcileError {
     MalformedBlocks,
 }
 
+/// A block chain is a series of blocks that reference back to the previous block.
+/// This implementation has an optional proof of work if you want to burn down the
+/// world.
 #[derive(PartialEq, Debug, Clone)]
 pub struct BlockChain {
     pub proof_of_work_size: usize,
@@ -25,8 +28,7 @@ impl BlockChain {
             blocks: vec![],
         };
 
-        // Ensure there is always a root block.
-        block_chain.add_payload_impl(BlockPayload {
+        block_chain.add_payload(BlockPayload {
             parent: Hash([0; 32]),
             timestamp: Utc::now().timestamp(),
             data: Vec::new(),
@@ -36,16 +38,49 @@ impl BlockChain {
         block_chain
     }
 
-    fn add_payload_impl(&mut self, payload: BlockPayload) {
-        std::env::set_var("RAYON_NUM_THREADS", "64");
+    /// Add a payload. It decides either the fast path of no work, or the slower highly
+    /// optimized proof of work path.
+    fn add_payload(&mut self, payload: BlockPayload) {
+        if self.proof_of_work_size == 0 {
+            self.add_payload_no_work(payload);
+        } else {
+            // Ensure there is always a root block.
+            self.add_payload_pow(payload);
+        }
+    }
 
+    /// This is a fast path for adding a proof of work.
+    fn add_payload_no_work(&mut self, payload: BlockPayload) {
         let start = std::time::Instant::now();
+        let hash = payload.hash();
+        self.blocks.push(Block {
+            hash,
+            payload,
+            computation_time: start.elapsed(),
+        });
+    }
+
+    /// This is a highly optimized method for adding a payload and computing the proof
+    /// of work.
+    fn add_payload_pow(&mut self, payload: BlockPayload) {
+        // If this code gets used for real, it would probably be worth hoisting this
+        // higher in the app. As it is I don't care because I don't really plan on using
+        // this beyond demos.
+        std::env::set_var("RAYON_NUM_THREADS", num_cpus::get().to_string());
+
+        // Time this function, it can take awhile.
+        let start = std::time::Instant::now();
+
         let proof_of_work_size = self.proof_of_work_size;
+        // Compute the partial hash to do as much work as possible before going into
+        // full parallelism mode.
         let partial_hash = payload.partial_hash();
+
+        // Spin up as many threads as possible to compute the hash.
         let payload = (0..u64::MAX)
             .into_par_iter()
             .find_map_any(move |proof_of_work| {
-                // In order to make the parallelism faster, use a partially computed hash.
+                // Make a copy of this partial hash.
                 let mut partial_hash = partial_hash.clone();
                 partial_hash.update(&proof_of_work.to_le_bytes());
                 let digest = partial_hash.finish();
@@ -70,11 +105,14 @@ impl BlockChain {
             })
             .unwrap();
 
+        // After finding the proof of work, compute the final hash.
         let hash = payload.hash();
         assert!(
             hash.meets_proof_of_work(proof_of_work_size),
             "The hash must meet the proof of work."
         );
+
+        // We're done!
         self.blocks.push(Block {
             hash,
             payload,
@@ -82,8 +120,10 @@ impl BlockChain {
         });
     }
 
+    // The public interface to add data. It calls out to the proper internal methods
+    /// to create aa payload.
     pub fn add_data(&mut self, data: Vec<u8>) {
-        self.add_payload_impl(BlockPayload {
+        self.add_payload(BlockPayload {
             parent: self.tip().hash.clone(),
             timestamp: Utc::now().timestamp(),
             data,
@@ -91,6 +131,7 @@ impl BlockChain {
         });
     }
 
+    /// Get the current tip of the block chain.
     pub fn tip(&self) -> &Block {
         self.blocks.last().expect("Unable to find a root block.")
     }
@@ -409,7 +450,7 @@ mod test {
     }
 
     #[test]
-    fn test_no_proof_of_work() {
+    fn test_invalid_proof_of_work() {
         let mut trusted = BlockChain::new(1);
 
         trusted.add_data("a".into());
@@ -436,5 +477,16 @@ mod test {
                 .expect_err("It should have failed."),
             ReconcileError::MalformedBlocks
         );
+    }
+
+    #[test]
+    fn test_no_proof_of_work() {
+        let mut quick_chain = BlockChain::new(0);
+
+        quick_chain.add_data("a".into());
+        quick_chain.add_data("b".into());
+        quick_chain.add_data("c".into());
+
+        assert_eq!(debug_blocks(&quick_chain.blocks), vec!["", "a", "b", "c"]);
     }
 }
