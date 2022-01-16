@@ -1,9 +1,27 @@
+use std::borrow::Cow;
+
 use crate::hash::Hash;
 
 use chrono::Utc;
 use rayon::prelude::*;
 use ring::digest::{Context, SHA256};
 use serde::{Deserialize, Serialize};
+
+pub trait BlockData: SerializedBytes + Clone + std::cmp::PartialEq + std::marker::Send {}
+
+impl<T> BlockData for T where T: SerializedBytes + Clone + std::cmp::PartialEq + std::marker::Send {}
+
+/// When serializing a struct, we need to consistently hash a byte slice of consistent
+/// endianness.
+pub trait SerializedBytes {
+    fn serialized_bytes(&self) -> Cow<[u8]>;
+}
+
+impl SerializedBytes for String {
+    fn serialized_bytes(&self) -> Cow<[u8]> {
+        Cow::from(self.as_bytes())
+    }
+}
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ReconcileError {
@@ -16,31 +34,28 @@ pub enum ReconcileError {
 /// This implementation has an optional proof of work if you want to burn down the
 /// world.
 #[derive(PartialEq, Debug, Clone)]
-pub struct BlockChain {
+pub struct BlockChain<T>
+where
+    T: BlockData,
+{
     pub proof_of_work_size: usize,
-    pub blocks: Vec<Block>,
+    pub blocks: Vec<Block<T>>,
 }
 
-impl BlockChain {
+impl<T> BlockChain<T>
+where
+    T: BlockData,
+{
     pub fn new(proof_of_work_size: usize) -> Self {
-        let mut block_chain = Self {
+        Self {
             proof_of_work_size,
             blocks: vec![],
-        };
-
-        block_chain.add_payload(BlockPayload {
-            parent: Hash([0; 32]),
-            timestamp: Utc::now().timestamp(),
-            data: Vec::new(),
-            proof_of_work: 0,
-        });
-
-        block_chain
+        }
     }
 
     /// Add a payload. It decides either the fast path of no work, or the slower highly
     /// optimized proof of work path.
-    fn add_payload(&mut self, payload: BlockPayload) {
+    fn add_payload(&mut self, payload: BlockPayload<T>) {
         if self.proof_of_work_size == 0 {
             self.add_payload_no_work(payload);
         } else {
@@ -50,7 +65,7 @@ impl BlockChain {
     }
 
     /// This is a fast path for adding a proof of work.
-    fn add_payload_no_work(&mut self, payload: BlockPayload) {
+    fn add_payload_no_work(&mut self, payload: BlockPayload<T>) {
         let start = std::time::Instant::now();
         let hash = payload.hash();
         self.blocks.push(Block {
@@ -62,7 +77,7 @@ impl BlockChain {
 
     /// This is a highly optimized method for adding a payload and computing the proof
     /// of work.
-    fn add_payload_pow(&mut self, payload: BlockPayload) {
+    fn add_payload_pow(&mut self, mut payload: BlockPayload<T>) {
         // If this code gets used for real, it would probably be worth hoisting this
         // higher in the app. As it is I don't care because I don't really plan on using
         // this beyond demos.
@@ -77,7 +92,7 @@ impl BlockChain {
         let partial_hash = payload.partial_hash();
 
         // Spin up as many threads as possible to compute the hash.
-        let payload = (0..u64::MAX)
+        payload.proof_of_work = (0..u64::MAX)
             .into_par_iter()
             .find_map_any(move |proof_of_work| {
                 // Make a copy of this partial hash.
@@ -88,22 +103,17 @@ impl BlockChain {
 
                 for index in 0..proof_of_work_size {
                     if data[index] != 0 {
+                        // Not enough zeros.
                         return None;
                     }
                 }
                 if data[proof_of_work_size] == 0 {
+                    // Too many zeros.
                     return None;
                 }
-
-                let mut payload = payload.clone();
-                payload.proof_of_work = proof_of_work;
-                if payload.hash().meets_proof_of_work(proof_of_work_size) {
-                    Some(payload)
-                } else {
-                    None
-                }
+                Some(proof_of_work)
             })
-            .unwrap();
+            .expect("Expected to find a proof of work.");
 
         // After finding the proof of work, compute the final hash.
         let hash = payload.hash();
@@ -122,9 +132,12 @@ impl BlockChain {
 
     // The public interface to add data. It calls out to the proper internal methods
     /// to create aa payload.
-    pub fn add_data(&mut self, data: Vec<u8>) {
+    pub fn add_data(&mut self, data: T) {
         self.add_payload(BlockPayload {
-            parent: self.tip().hash.clone(),
+            parent: match self.tip() {
+                Some(block) => block.hash.clone(),
+                None => Hash::empty(),
+            },
             timestamp: Utc::now().timestamp(),
             data,
             proof_of_work: 0,
@@ -132,8 +145,8 @@ impl BlockChain {
     }
 
     /// Get the current tip of the block chain.
-    pub fn tip(&self) -> &Block {
-        self.blocks.last().expect("Unable to find a root block.")
+    pub fn tip(&self) -> Option<&Block<T>> {
+        self.blocks.last()
     }
 
     pub fn hash_to_block_index(&self, hash: &Hash) -> Option<usize> {
@@ -145,7 +158,7 @@ impl BlockChain {
         None
     }
 
-    pub fn reconcile(&mut self, mut foreign_blocks: &[Block]) -> Result<(), ReconcileError> {
+    pub fn reconcile(&mut self, mut foreign_blocks: &[Block<T>]) -> Result<(), ReconcileError> {
         if foreign_blocks.is_empty() {
             // No blocks to add. This is weird, but fine.
             return Ok(());
@@ -206,15 +219,19 @@ impl BlockChain {
 
 /// Debug print the string content of blocks.
 #[allow(dead_code)] // Useful for debugging, and used in tests.
-fn debug_blocks(blocks: &[Block]) -> Vec<&str> {
+fn debug_blocks(blocks: &[Block<String>]) -> Vec<&str> {
     blocks
         .iter()
-        .map(|b| b.parse_data_as_utf8().unwrap())
+        .map(|s| s.payload.data.as_str())
         .collect::<Vec<&str>>()
 }
 
 /// Ensure the blocks are valid in their structure.
-fn verify_blocks(proof_of_work_size: usize, blocks: &[Block], mut parent: Hash) -> bool {
+fn verify_blocks<T: BlockData>(
+    proof_of_work_size: usize,
+    blocks: &[Block<T>],
+    mut parent: Hash,
+) -> bool {
     for block in blocks {
         if block.payload.parent != parent {
             return false;
@@ -234,24 +251,30 @@ fn verify_blocks(proof_of_work_size: usize, blocks: &[Block], mut parent: Hash) 
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Eq, Hash)]
-pub struct BlockPayload {
+pub struct BlockPayload<T>
+where
+    T: BlockData,
+{
     pub parent: Hash,
     pub timestamp: i64,
-    pub data: Vec<u8>,
+    pub data: T,
     pub proof_of_work: u64,
 }
 
-impl BlockPayload {
+impl<T> BlockPayload<T>
+where
+    T: BlockData,
+{
     fn hash(&self) -> Hash {
         let mut context = Context::new(&SHA256);
         context.update(&self.parent.0);
         context.update(&self.timestamp.to_le_bytes());
-        context.update(&self.data);
+        context.update(&self.data.serialized_bytes());
         context.update(&self.proof_of_work.to_le_bytes());
         let digest = context.finish();
         let data: &[u8] = digest.as_ref();
         assert_eq!(data.len(), 32, "Expected the hash to be 32 bytes");
-        let mut hash = Hash::new();
+        let mut hash = Hash::empty();
         for (index, byte) in data.iter().enumerate() {
             hash.0[index] = *byte;
         }
@@ -263,56 +286,49 @@ impl BlockPayload {
         let mut context = Context::new(&SHA256);
         context.update(&self.parent.0);
         context.update(&self.timestamp.to_le_bytes());
-        context.update(&self.data);
+        context.update(&self.data.serialized_bytes());
         context
     }
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
-pub struct Block {
+pub struct Block<T: BlockData> {
     pub hash: Hash,
     pub computation_time: std::time::Duration,
-    pub payload: BlockPayload,
-}
-
-impl Block {
-    fn parse_data_as_utf8(&self) -> Result<&str, std::str::Utf8Error> {
-        std::str::from_utf8(&self.payload.data)
-    }
+    pub payload: BlockPayload<T>,
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
 
-    fn get_block_text(block_chain: &BlockChain, index: usize) -> &str {
-        block_chain
+    fn get_block_text(block_chain: &BlockChain<String>, index: usize) -> &str {
+        &block_chain
             .blocks
             .get(index)
             .expect("Failed to get the block at the index.")
-            .parse_data_as_utf8()
-            .expect("Failed to parse the block data as text.")
+            .payload
+            .data
     }
 
     #[test]
     fn test_add_data() {
-        let mut block_chain = BlockChain::new(1);
+        let mut block_chain = BlockChain::<String>::new(1);
 
         block_chain.add_data("First block".into());
         block_chain.add_data("Second block".into());
         block_chain.add_data("Third block".into());
 
-        assert_eq!(get_block_text(&block_chain, 0), "");
-        assert_eq!(get_block_text(&block_chain, 1), "First block");
-        assert_eq!(get_block_text(&block_chain, 2), "Second block");
-        assert_eq!(get_block_text(&block_chain, 3), "Third block");
+        assert_eq!(get_block_text(&block_chain, 0), "First block");
+        assert_eq!(get_block_text(&block_chain, 1), "Second block");
+        assert_eq!(get_block_text(&block_chain, 2), "Third block");
     }
 
     #[test]
     fn test_rooted_reconcile() {
         // This will reconcile a longer blockchain with our shorter one.
 
-        let mut trusted = BlockChain::new(1);
+        let mut trusted = BlockChain::<String>::new(1);
 
         trusted.add_data("a".into());
         trusted.add_data("b".into());
@@ -334,7 +350,7 @@ mod test {
 
     #[test]
     fn test_rootless_reconcile() {
-        let mut trusted = BlockChain::new(1);
+        let mut trusted = BlockChain::<String>::new(1);
 
         trusted.add_data("a".into());
         trusted.add_data("b".into());
@@ -352,15 +368,12 @@ mod test {
             .expect("Failed to reconcile blockchains.");
 
         assert_eq!(trusted, foreign, "The two are equal");
-        assert_eq!(
-            debug_blocks(&trusted.blocks),
-            vec!["", "a", "b", "c", "d", "e"]
-        );
+        assert_eq!(debug_blocks(&trusted.blocks), vec!["a", "b", "c", "d", "e"]);
     }
 
     #[test]
     fn test_foreign_wins() {
-        let mut trusted = BlockChain::new(1);
+        let mut trusted = BlockChain::<String>::new(1);
 
         trusted.add_data("a".into());
         trusted.add_data("b".into());
@@ -380,15 +393,12 @@ mod test {
 
         assert_eq!(trusted, foreign, "The two are equal");
 
-        assert_eq!(
-            debug_blocks(&trusted.blocks),
-            vec!["", "a", "b", "c", "d", "e"]
-        );
+        assert_eq!(debug_blocks(&trusted.blocks), vec!["a", "b", "c", "d", "e"]);
     }
 
     #[test]
     fn test_trusting_wins() {
-        let mut trusted = BlockChain::new(1);
+        let mut trusted = BlockChain::<String>::new(1);
 
         trusted.add_data("a".into());
         trusted.add_data("b".into());
@@ -409,19 +419,13 @@ mod test {
             ReconcileError::ShorterForeignBlocks
         );
 
-        assert_eq!(
-            debug_blocks(&trusted.blocks),
-            vec!["", "a", "b", "c", "d", "e"]
-        );
-        assert_eq!(
-            debug_blocks(&foreign.blocks),
-            vec!["", "a", "b", "c", "losing"]
-        );
+        assert_eq!(debug_blocks(&trusted.blocks), vec!["a", "b", "c", "d", "e"]);
+        assert_eq!(debug_blocks(&foreign.blocks), vec!["a", "b", "c", "losing"]);
     }
 
     #[test]
     fn test_failed_reconcile() {
-        let mut trusted = BlockChain::new(1);
+        let mut trusted = BlockChain::<String>::new(1);
 
         trusted.add_data("a".into());
         trusted.add_data("b".into());
@@ -438,7 +442,13 @@ mod test {
         assert_ne!(trusted, foreign, "The two are different");
 
         // Carve off the blocks at the end that don't match anymore.
-        let blocks = &foreign.blocks[5..];
+        let e_index = foreign
+            .blocks
+            .iter()
+            .position(|b| b.payload.data == "E")
+            .unwrap();
+
+        let blocks = &foreign.blocks[e_index..];
         assert_eq!(debug_blocks(&blocks), vec!["E", "F"]);
 
         assert_eq!(
@@ -451,7 +461,7 @@ mod test {
 
     #[test]
     fn test_invalid_proof_of_work() {
-        let mut trusted = BlockChain::new(1);
+        let mut trusted = BlockChain::<String>::new(1);
 
         trusted.add_data("a".into());
         trusted.add_data("b".into());
@@ -469,7 +479,7 @@ mod test {
         assert_ne!(trusted, foreign, "The two are different");
 
         // Carve off the blocks at the end that don't match anymore.
-        assert_eq!(debug_blocks(&foreign.blocks), vec!["", "a", "b", "c", "d"]);
+        assert_eq!(debug_blocks(&foreign.blocks), vec!["a", "b", "c", "d"]);
 
         assert_eq!(
             trusted
@@ -481,12 +491,12 @@ mod test {
 
     #[test]
     fn test_no_proof_of_work() {
-        let mut quick_chain = BlockChain::new(0);
+        let mut quick_chain = BlockChain::<String>::new(0);
 
         quick_chain.add_data("a".into());
         quick_chain.add_data("b".into());
         quick_chain.add_data("c".into());
 
-        assert_eq!(debug_blocks(&quick_chain.blocks), vec!["", "a", "b", "c"]);
+        assert_eq!(debug_blocks(&quick_chain.blocks), vec!["a", "b", "c"]);
     }
 }

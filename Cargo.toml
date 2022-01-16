@@ -19,3 +19,4 @@ futures = {version = "0.3", features = []}
 structopt = "0.3"
 uuid = {version = "0.8", features = ["serde", "v4"]}
 num_cpus = { version = "1.13" }
+bincode = "1.3"

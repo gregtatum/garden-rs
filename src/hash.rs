@@ -10,7 +10,7 @@ pub struct Hash(pub [u8; 32]);
 
 impl Hash {
     /// Create a new empty Hash.
-    pub fn new() -> Self {
+    pub fn empty() -> Self {
         Hash([0; 32])
     }
 
