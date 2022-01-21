@@ -31,6 +31,10 @@ impl GardenPlot {
             name,
         }
     }
+
+    pub fn get_dimensions() -> (u16, u16) {
+        (10, 10)
+    }
 }
 
 #[cfg(test)]
