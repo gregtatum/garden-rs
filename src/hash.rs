@@ -14,17 +14,6 @@ impl Hash {
         Hash([0; 32])
     }
 
-    /// Use the proof of work size to determine how many leading 0 values to use.
-    pub fn meets_proof_of_work(&self, proof_of_work_size: usize) -> bool {
-        for i in 0..proof_of_work_size {
-            if self.0[i] != 0 {
-                return false;
-            }
-        }
-        // Ensure that there aren't any additional leading zeros.
-        self.0[proof_of_work_size] != 0
-    }
-
     /// A root hash would be all 0 values. This is a somewhat hacky way to create a root
     /// block without adding another property to the Block struct.
     pub fn is_root(&self) -> bool {

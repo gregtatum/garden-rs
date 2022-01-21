@@ -89,14 +89,12 @@ mod test {
                     if let Some(Value::String(ref mut hash)) = block.get_mut("hash") {
                         *hash = hashes.get(hash);
                     }
-                    block.remove("computation_time");
 
                     // Strip out the payload.
                     if let Some(Value::Object(ref mut payload)) = block.get_mut("payload") {
                         if let Some(Value::String(ref mut parent)) = payload.get_mut("parent") {
                             *parent = hashes.get(parent);
                         }
-                        payload.remove("proof_of_work");
                         payload.remove("timestamp");
 
                         // Anonymize the payload.
@@ -119,7 +117,7 @@ mod test {
 
     #[test]
     fn test_create_garden_plot() {
-        let mut block_chain = BlockChain::<Event>::new(0);
+        let mut block_chain = BlockChain::<Event>::new();
         block_chain.add_data(Event::CreatePlot(GardenPlot::new("Greg's plot".into())));
         assert_display_snapshot!(serialize_for_test(&block_chain), @r###"
         [
