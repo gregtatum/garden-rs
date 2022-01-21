@@ -43,6 +43,23 @@ impl From<&Hash> for String {
     }
 }
 
+impl TryFrom<&str> for Hash {
+    type Error = ();
+    fn try_from(other: &str) -> Result<Self, Self::Error> {
+        if other.len() != 64 {
+            return Err(());
+        }
+        let mut result = [0; 32];
+        for i in 0..32 {
+            result[i] = match u8::from_str_radix(&other[i * 2..i * 2 + 2], 16) {
+                Ok(v) => v,
+                Err(_) => return Err(()),
+            };
+        }
+        Ok(Hash(result))
+    }
+}
+
 /// Turn a Hash into a human readable string.
 impl Serialize for Hash {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -83,17 +100,10 @@ impl<'de> Visitor<'de> for HashVisitor {
     where
         E: de::Error,
     {
-        if value.len() != 64 {
-            return Err(E::custom(format!("Hash is not 64 characters: {}", value)));
+        match Hash::try_from(value) {
+            Ok(hash) => Ok(hash),
+            Err(_) => Err(E::custom(format!("Hash could not be parsed: {}", value))),
         }
-        let mut result = [0; 32];
-        for i in 0..32 {
-            result[i] = match u8::from_str_radix(&value[i * 2..i * 2 + 2], 16) {
-                Ok(v) => v,
-                Err(_) => return Err(E::custom(format!("Hash could not be parsed: {}", value))),
-            };
-        }
-        Ok(Hash(result))
     }
 }
 

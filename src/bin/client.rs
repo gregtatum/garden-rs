@@ -1,4 +1,5 @@
 use futures::prelude::*;
+use garden::chain_store::ChainStore;
 use libp2p::{
     core::upgrade,
     floodsub::{self, Floodsub, FloodsubEvent},
@@ -9,7 +10,7 @@ use libp2p::{
     tcp::TokioTcpConfig,
     Multiaddr, NetworkBehaviour, PeerId, Transport,
 };
-use std::error::Error;
+use std::{error::Error, path::PathBuf};
 use structopt::StructOpt;
 use tokio::io::{self, AsyncBufReadExt};
 
@@ -19,14 +20,21 @@ struct CliOptions {
     /// Multi-address to listen on.
     #[structopt(long, default_value = "/ip4/0.0.0.0/tcp/0")]
     listen_on: String,
+
     /// Multi-address to connect to, e.g. "/ip4/1.2.3.4/tcp/5678"
     #[structopt(long)]
     connect_to: Option<String>,
+
+    /// The directory the garden files are persisted to.
+    #[structopt(parse(from_os_str), default_value = "./.garden")]
+    save_path: PathBuf,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let cli_options = CliOptions::from_args();
+
+    let object_store = ChainStore::try_new(cli_options.save_path);
 
     // Create a random PeerId
     let local_key = identity::Keypair::generate_ed25519();

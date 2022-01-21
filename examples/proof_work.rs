@@ -5,7 +5,7 @@ use garden::block_chain::BlockChain;
 fn main() {
     // The number represents the proof of work. The work load increases according to:
     // 2^(n*8), so it increases quite dramatically.
-    let mut block_chain = BlockChain::<String>::new(4);
+    let mut block_chain = BlockChain::<String>::new(3);
 
     // Time how long it takes.
     let start = std::time::Instant::now();
