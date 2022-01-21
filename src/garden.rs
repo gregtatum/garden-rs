@@ -36,33 +36,102 @@ impl GardenPlot {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::block_chain::BlockChain;
+    use crate::block_chain::{BlockChain, BlockData};
+    use insta::assert_display_snapshot;
+    use serde_json::Value;
+    use std::collections::HashMap;
+
+    fn serialize_for_test<T: BlockData + Serialize>(block_chain: &BlockChain<T>) -> String {
+        let mut value = serde_json::to_value(&block_chain.blocks)
+            .expect("Unable to convert blockchain to value.");
+        make_test_safe(&mut value);
+        serde_json::to_string_pretty(&value).expect("Failed to run serde_json::to_string_pretty")
+    }
+
+    struct InternedString {
+        i: usize,
+        map: HashMap<String, String>,
+        tag: &'static str,
+    }
+
+    impl InternedString {
+        pub fn new(tag: &'static str) -> Self {
+            Self {
+                i: 0,
+                map: HashMap::new(),
+                tag,
+            }
+        }
+
+        pub fn get(&mut self, value: &str) -> String {
+            if let Some(v) = self.map.get(value) {
+                return v.into();
+            }
+            self.i += 1;
+            self.map
+                .insert(value.into(), format!("({}:{})", self.tag, self.i));
+            self.map.get(value).unwrap().into()
+        }
+    }
+
+    /// Removes all arbitrary data from a blockchain.
+    fn make_test_safe(value: &mut Value) {
+        let mut hashes = InternedString::new("Hash");
+        let mut uuids = InternedString::new("UUID");
+
+        if let Value::Array(ref mut blocks) = value {
+            for block in blocks {
+                if let Value::Object(ref mut block) = block {
+                    if let Some(Value::String(ref mut hash)) = block.get_mut("hash") {
+                        *hash = hashes.get(hash);
+                    }
+                    block.remove("computation_time");
+
+                    // Strip out the payload.
+                    if let Some(Value::Object(ref mut payload)) = block.get_mut("payload") {
+                        if let Some(Value::String(ref mut parent)) = payload.get_mut("parent") {
+                            *parent = hashes.get(parent);
+                        }
+                        payload.remove("proof_of_work");
+                        payload.remove("timestamp");
+
+                        // Anonymize the payload.
+                        if let Some(Value::Object(ref mut data)) = payload.get_mut("data") {
+                            if let Some(Value::Object(ref mut create_plot)) =
+                                data.get_mut("CreatePlot")
+                            {
+                                if let Some(Value::String(ref mut uuid)) =
+                                    create_plot.get_mut("uuid")
+                                {
+                                    *uuid = uuids.get(uuid);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
-    fn test_create_garden_pot() {
+    fn test_create_garden_plot() {
         let mut block_chain = BlockChain::<Event>::new(0);
         block_chain.add_data(Event::CreatePlot(GardenPlot::new("Greg's plot".into())));
-        serde_json::to_string_pretty(&block_chain.blocks)
-            .expect("Unable to serialize blocks to json");
-        // [
-        //     {
-        //       "hash": "a63b3a79d28c4df04c4988fd40200f6acb32bfaa947731a8a18c2d55e8c166e1",
-        //       "computation_time": {
-        //         "secs": 0,
-        //         "nanos": 32240
-        //       },
-        //       "payload": {
-        //         "parent": "0000000000000000000000000000000000000000000000000000000000000000",
-        //         "timestamp": 1642369782,
-        //         "data": {
-        //           "CreatePlot": {
-        //             "uuid": "96ab8e21-6959-4b21-a02c-5320ae7a5d70",
-        //             "name": "Greg's plot"
-        //           }
-        //         },
-        //         "proof_of_work": 0
-        //       }
-        //     }
-        //   ]
+        assert_display_snapshot!(serialize_for_test(&block_chain), @r###"
+        [
+          {
+            "hash": "(Hash:1)",
+            "payload": {
+              "data": {
+                "CreatePlot": {
+                  "name": "Greg's plot",
+                  "uuid": "(UUID:1)"
+                }
+              },
+              "parent": "(Hash:2)"
+            }
+          }
+        ]
+        "###);
     }
 }

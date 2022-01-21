@@ -1,9 +1,13 @@
 use crate::hash::Hash;
 use std::{collections::HashSet, fs, path::PathBuf};
 
-/// Stores blockchains.
+trait ChainStore {
+    fn refresh_chains(&mut self) -> Result<(), ChainStoreError>;
+}
+
+/// Persists blockchains on the file system.
 #[derive(Debug, PartialEq)]
-pub struct ChainStore {
+pub struct FsChainStore {
     /// The path to where the chains are stored.
     ///   Example path: .garden
     pub root_path: PathBuf,
@@ -29,7 +33,7 @@ pub enum ChainStoreError {
     CouldNotReadDirectory,
 }
 
-impl ChainStore {
+impl FsChainStore {
     pub fn try_new(root_path: PathBuf) -> Result<Self, ChainStoreError> {
         if !root_path.as_path().exists() {
             let parent = root_path.as_path().parent();
@@ -84,8 +88,10 @@ impl ChainStore {
 
         Ok(chain_store)
     }
+}
 
-    pub fn refresh_chains(&mut self) -> Result<(), ChainStoreError> {
+impl ChainStore for FsChainStore {
+    fn refresh_chains(&mut self) -> Result<(), ChainStoreError> {
         let paths = fs::read_dir(self.chains_path.clone());
         if paths.is_err() {
             return Err(ChainStoreError::CouldNotReadDirectory);
@@ -137,7 +143,7 @@ mod test {
     fn test_chainstore_try_new() {
         let tmp_dir = TempDir::new("example").expect("Failed to create a temp directory");
         let path: PathBuf = tmp_dir.into_path();
-        ChainStore::try_new(path.clone()).expect("Failed to create ChainStore");
+        FsChainStore::try_new(path.clone()).expect("Failed to create ChainStore");
 
         assert!(subpath_exists(&path, "chains"));
         assert!(subpath_exists(&path, "refs"));
@@ -148,7 +154,7 @@ mod test {
         let tmp_dir = TempDir::new("example").expect("Failed to create a temp directory");
         let mut path: PathBuf = tmp_dir.into_path();
         path.push(".garden");
-        ChainStore::try_new(path.clone()).expect("Failed to create ChainStore");
+        FsChainStore::try_new(path.clone()).expect("Failed to create ChainStore");
 
         assert!(subpath_exists(&path, "chains"));
         assert!(subpath_exists(&path, "refs"));
@@ -161,7 +167,7 @@ mod test {
         path.push("not-here");
         path.push(".garden");
         assert_eq!(
-            ChainStore::try_new(path.clone()).unwrap_err(),
+            FsChainStore::try_new(path.clone()).unwrap_err(),
             ChainStoreError::RootPathNotValid
         );
     }
@@ -195,7 +201,7 @@ mod test {
         touch(&subpath(&refs, "garden-1"));
         touch(&subpath(&refs, "garden-2"));
 
-        let store = ChainStore::try_new(path.clone()).expect("Failed to create ChainStore");
+        let store = FsChainStore::try_new(path.clone()).expect("Failed to create ChainStore");
 
         assert_eq!(store.chains.len(), 3, "Three chains were found.");
 
