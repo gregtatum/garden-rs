@@ -1,78 +1,73 @@
 //! This file contains an experimental game client. It needs to be hooked up to
 //! everything still.
 
+use garden::game::{
+    drawable::{self, Draw, LineType},
+    primitives::{BBox, Entity, Position, Size, Vec2},
+};
 use rltk::{Rltk, RltkBuilder, VirtualKeyCode, RGB};
 
-pub struct Glyph {
-    pub glyph: rltk::FontCharType,
-    pub fg: RGB,
-    pub bg: RGB,
+/// This is anything needed for rendering a garden entity, which is separate from its
+/// serialized form in the blockchain.
+#[derive(PartialEq)]
+pub struct Garden {
+    pub bbox: BBox<i64>,
+    pub drawable: drawable::Box,
 }
 
-trait Entity {
-    fn position<'a>(&'a self) -> &'a Position;
-}
+impl Garden {
+    pub fn new(bbox: BBox<i64>) -> Self {
+        Self {
+            bbox,
+            drawable: drawable::Box {
+                line_type: LineType::Double,
+                fg: RGB::named(rltk::BROWN1),
+                bg: RGB::named(rltk::BLACK),
+            },
+        }
+    }
 
-trait Draw {
-    fn draw<T: Entity>(&self, ctx: &mut Rltk, entity: &T);
-}
-
-impl Draw for Glyph {
-    fn draw<T: Entity>(&self, ctx: &mut Rltk, entity: &T) {
-        ctx.set(
-            entity.position().x,
-            entity.position().y,
-            self.fg,
-            self.bg,
-            self.glyph,
-        );
+    pub fn update(&self) {
+        // Do nothing for now.
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub struct Position {
-    pub x: i64,
-    pub y: i64,
-}
-
-impl Position {
-    pub fn new(x: i64, y: i64) -> Self {
-        Self { x, y }
+impl drawable::Draw for Garden {
+    fn draw<T: Entity>(&self, ctx: &mut Rltk, _entity: &T) {
+        self.drawable.draw(ctx, self);
     }
 }
 
-impl std::ops::Add<Position> for Position {
-    type Output = Position;
+impl Entity for Garden {
+    fn position<'a>(&'a self) -> Position {
+        Position::new(
+            self.bbox.top_left.x + (self.bbox.size.x / 2),
+            self.bbox.top_left.y + (self.bbox.size.y / 2),
+        )
+    }
 
-    fn add(self, other: Position) -> Position {
-        Position::new(self.x + other.x, self.y + other.y)
+    fn bbox<'a>(&'a self) -> BBox<i64> {
+        self.bbox.clone()
     }
 }
 
-impl std::ops::AddAssign for Position {
-    fn add_assign(&mut self, other: Self) {
-        *self = Self {
-            x: self.x + other.x,
-            y: self.y + other.y,
-        };
-    }
+pub struct GameState {
+    pub player: Player,
+    pub input_device: InputDevice,
+    pub gardens: Vec<Garden>,
 }
 
-struct GameState {
-    player: Player,
-    input_device: InputDevice,
-}
-
+#[derive(PartialEq)]
 pub struct Player {
     position: Position,
-    glyph: Glyph,
+    glyph: drawable::Glyph,
 }
 
 impl Player {
     pub fn new() -> Self {
         Self {
             position: Position::new(0, 0),
-            glyph: Glyph {
+            glyph: drawable::Glyph {
                 glyph: rltk::to_cp437('@'),
                 fg: RGB::named(rltk::YELLOW),
                 bg: RGB::named(rltk::BLACK),
@@ -85,15 +80,15 @@ impl Player {
     }
 }
 
-impl Draw for Player {
+impl drawable::Draw for Player {
     fn draw<T: Entity>(&self, ctx: &mut Rltk, _entity: &T) {
         self.glyph.draw(ctx, self);
     }
 }
 
 impl Entity for Player {
-    fn position<'a>(&'a self) -> &'a Position {
-        &self.position
+    fn position<'a>(&'a self) -> Position {
+        self.position
     }
 }
 
@@ -104,12 +99,12 @@ pub struct InputDevice {
 impl InputDevice {
     pub fn new() -> Self {
         Self {
-            move_intent: Position::new(0, 0),
+            move_intent: Vec2::new(0, 0),
         }
     }
 
     pub fn update(&mut self, ctx: &mut Rltk) {
-        self.move_intent = Position::new(0, 0);
+        self.move_intent = Vec2::new(0, 0);
         match ctx.key {
             None => {} // Nothing happened
             Some(key) => match key {
@@ -133,20 +128,31 @@ impl InputDevice {
 
 impl GameState {
     pub fn new() -> Self {
+        let bbox = BBox {
+            top_left: Position::new(10, 10),
+            size: Size::new(30, 20),
+        };
         Self {
             player: Player::new(),
             input_device: InputDevice::new(),
+            gardens: vec![Garden::new(bbox)],
         }
     }
 
     pub fn update(&mut self, ctx: &mut Rltk) {
         self.input_device.update(ctx);
         self.player.update(&self.input_device);
+        for garden in &self.gardens {
+            garden.update();
+        }
     }
 
     pub fn draw(&mut self, ctx: &mut Rltk) {
         ctx.cls();
         self.player.draw(ctx, &self.player);
+        for garden in &self.gardens {
+            garden.draw(ctx, garden)
+        }
     }
 }
 

@@ -1299,6 +1299,7 @@ dependencies = [
  "futures 0.3.19",
  "insta",
  "libp2p",
+ "num-traits",
  "num_cpus",
  "ring",
  "rltk",
