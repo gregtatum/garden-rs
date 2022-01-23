@@ -64,9 +64,9 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn new() -> Self {
+    pub fn new(position: Position) -> Self {
         Self {
-            position: Position::new(0, 0),
+            position,
             glyph: drawable::Glyph {
                 glyph: rltk::to_cp437('@'),
                 fg: RGB::named(rltk::YELLOW),
@@ -133,7 +133,7 @@ impl GameState {
             size: Size::new(30, 20),
         };
         Self {
-            player: Player::new(),
+            player: Player::new(bbox.center()),
             input_device: InputDevice::new(),
             gardens: vec![Garden::new(bbox)],
         }
@@ -149,10 +149,10 @@ impl GameState {
 
     pub fn draw(&mut self, ctx: &mut Rltk) {
         ctx.cls();
-        self.player.draw(ctx, &self.player);
         for garden in &self.gardens {
             garden.draw(ctx, garden)
         }
+        self.player.draw(ctx, &self.player);
     }
 }
 
