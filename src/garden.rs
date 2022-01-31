@@ -1,10 +1,29 @@
-use std::borrow::Cow;
-
+use crate::{
+    block_chain::{BlockChain, SerializedBytes},
+    hash::Hash,
+};
 use bincode;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use uuid::Uuid;
 
-use crate::block_chain::SerializedBytes;
+pub struct TheLand {
+    block_chain: BlockChain<Event>,
+}
+
+impl TheLand {
+    pub fn new() -> Self {
+        Self {
+            block_chain: BlockChain::<Event>::new(),
+        }
+    }
+
+    pub fn create_garden_plot(&mut self, name: String) -> (Hash, GardenPlot) {
+        let plot = GardenPlot::new(name);
+        let block = self.block_chain.add_data(Event::CreatePlot(plot.clone()));
+        (block.hash.clone(), plot)
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub enum Event {
@@ -22,6 +41,12 @@ impl SerializedBytes for Event {
 pub struct GardenPlot {
     pub uuid: Uuid,
     pub name: String,
+}
+
+impl SerializedBytes for GardenPlot {
+    fn serialized_bytes(&self) -> Cow<[u8]> {
+        Cow::from(bincode::serialize(self).expect("Unable to serialize GardenPlot."))
+    }
 }
 
 impl GardenPlot {
@@ -45,11 +70,14 @@ mod test {
     use serde_json::Value;
     use std::collections::HashMap;
 
-    fn serialize_for_test<T: BlockData + Serialize>(block_chain: &BlockChain<T>) -> String {
+    fn serialize_for_test<T: BlockData + Serialize>(
+        block_chain: &BlockChain<T>,
+    ) -> String {
         let mut value = serde_json::to_value(&block_chain.blocks)
             .expect("Unable to convert blockchain to value.");
         make_test_safe(&mut value);
-        serde_json::to_string_pretty(&value).expect("Failed to run serde_json::to_string_pretty")
+        serde_json::to_string_pretty(&value)
+            .expect("Failed to run serde_json::to_string_pretty")
     }
 
     struct InternedString {
@@ -91,14 +119,18 @@ mod test {
                     }
 
                     // Strip out the payload.
-                    if let Some(Value::Object(ref mut payload)) = block.get_mut("payload") {
-                        if let Some(Value::String(ref mut parent)) = payload.get_mut("parent") {
+                    if let Some(Value::Object(ref mut payload)) = block.get_mut("payload")
+                    {
+                        if let Some(Value::String(ref mut parent)) =
+                            payload.get_mut("parent")
+                        {
                             *parent = hashes.get(parent);
                         }
                         payload.remove("timestamp");
 
                         // Anonymize the payload.
-                        if let Some(Value::Object(ref mut data)) = payload.get_mut("data") {
+                        if let Some(Value::Object(ref mut data)) = payload.get_mut("data")
+                        {
                             if let Some(Value::Object(ref mut create_plot)) =
                                 data.get_mut("CreatePlot")
                             {

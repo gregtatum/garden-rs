@@ -5,7 +5,7 @@ pub trait Draw {
     fn draw<T: Entity>(&self, ctx: &mut Rltk, entity: &T);
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct Glyph {
     pub glyph: rltk::FontCharType,
     pub fg: RGB,
@@ -19,13 +19,13 @@ impl Draw for Glyph {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum LineType {
     Single,
     Double,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct Box {
     pub line_type: LineType,
     pub fg: RGB,
@@ -43,5 +43,18 @@ impl Draw for Box {
             self.fg,
             self.bg,
         )
+    }
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub struct Text {
+    pub string: String,
+    pub fg: RGB,
+    pub bg: RGB,
+}
+
+impl Draw for Text {
+    fn draw<T: Entity>(&self, ctx: &mut Rltk, entity: &T) {
+        ctx.print(entity.position().x, entity.position().y, &self.string)
     }
 }

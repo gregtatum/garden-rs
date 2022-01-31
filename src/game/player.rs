@@ -1,14 +1,16 @@
 use super::{
     drawable,
+    garden::Garden,
     input_device::InputDevice,
     primitives::{Entity, Position},
+    ui,
 };
 use rltk::{Rltk, RGB};
 
 #[derive(PartialEq)]
 pub struct Player {
-    position: Position,
-    glyph: drawable::Glyph,
+    pub position: Position,
+    pub glyph: drawable::Glyph,
 }
 
 impl Player {
@@ -23,8 +25,30 @@ impl Player {
         }
     }
 
-    pub fn update(&mut self, input_device: &InputDevice) {
-        self.position += input_device.move_intent;
+    pub fn update(
+        &mut self,
+        input_device: &InputDevice,
+        gardens: &Vec<Garden>,
+        input: &Option<ui::InputUI>,
+    ) {
+        if input.is_some() {
+            // Do not move the player if there is some input to be made.
+            return;
+        }
+        let mut next_position = self.position + input_device.move_intent;
+        for garden in gardens {
+            if garden.bbox.intersects_point(self.position) {
+                if garden.bbox.left() == next_position.x
+                    || garden.bbox.right() == next_position.x
+                    || garden.bbox.top() == next_position.y
+                    || garden.bbox.bottom() == next_position.y
+                {
+                    next_position = self.position;
+                    break;
+                }
+            }
+        }
+        self.position = next_position;
     }
 }
 

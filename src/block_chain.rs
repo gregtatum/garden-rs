@@ -6,9 +6,15 @@ use chrono::Utc;
 use ring::digest::{Context, SHA256};
 use serde::{Deserialize, Serialize};
 
-pub trait BlockData: SerializedBytes + Clone + std::cmp::PartialEq + std::marker::Send {}
+pub trait BlockData:
+    SerializedBytes + Clone + std::cmp::PartialEq + std::marker::Send
+{
+}
 
-impl<T> BlockData for T where T: SerializedBytes + Clone + std::cmp::PartialEq + std::marker::Send {}
+impl<T> BlockData for T where
+    T: SerializedBytes + Clone + std::cmp::PartialEq + std::marker::Send
+{
+}
 
 /// When serializing a struct, we need to consistently hash a byte slice of consistent
 /// endianness.
@@ -53,14 +59,15 @@ where
         Self { blocks: vec![] }
     }
 
-    fn add_payload(&mut self, payload: BlockPayload<T>) {
+    fn add_payload(&mut self, payload: BlockPayload<T>) -> &Block<T> {
         let hash = payload.hash();
         self.blocks.push(Block { hash, payload });
+        self.blocks.last().unwrap()
     }
 
     // The public interface to add data. It calls out to the proper internal methods
     /// to create aa payload.
-    pub fn add_data(&mut self, data: T) {
+    pub fn add_data(&mut self, data: T) -> &Block<T> {
         self.add_payload(BlockPayload {
             parent: match self.tip() {
                 Some(block) => block.hash.clone(),
@@ -68,7 +75,7 @@ where
             },
             timestamp: Utc::now().timestamp(),
             data,
-        });
+        })
     }
 
     /// Get the current tip of the block chain.
@@ -85,7 +92,10 @@ where
         None
     }
 
-    pub fn reconcile(&mut self, mut foreign_blocks: &[Block<T>]) -> Result<(), ReconcileError> {
+    pub fn reconcile(
+        &mut self,
+        mut foreign_blocks: &[Block<T>],
+    ) -> Result<(), ReconcileError> {
         if foreign_blocks.is_empty() {
             // No blocks to add. This is weird, but fine.
             return Ok(());
@@ -98,7 +108,8 @@ where
 
         // Try to find the parent block.
         let parent_block_index = {
-            let result = self.hash_to_block_index(&foreign_blocks.first().unwrap().payload.parent);
+            let result =
+                self.hash_to_block_index(&foreign_blocks.first().unwrap().payload.parent);
             if result.is_none() {
                 return Err(ReconcileError::NoMatchingParent);
             }
@@ -109,7 +120,8 @@ where
         let mut last_trusted_index = parent_block_index;
         for index in (parent_block_index + 1)..self.blocks.len() {
             let trusted_block = self.blocks.get(index).unwrap();
-            let foreign_block = foreign_blocks.get(index - parent_block_index - 1).unwrap();
+            let foreign_block =
+                foreign_blocks.get(index - parent_block_index - 1).unwrap();
 
             if trusted_block == foreign_block {
                 last_trusted_index = index;
@@ -120,7 +132,8 @@ where
 
         let new_foreign_block_base_index = last_trusted_index - parent_block_index;
         let trusted_len = self.blocks.len() - last_trusted_index - 1;
-        let foreign_len = foreign_blocks.len() - (last_trusted_index - parent_block_index);
+        let foreign_len =
+            foreign_blocks.len() - (last_trusted_index - parent_block_index);
 
         if trusted_len > foreign_len {
             return Err(ReconcileError::ShorterForeignBlocks);

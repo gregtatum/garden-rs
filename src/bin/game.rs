@@ -6,10 +6,7 @@ use rltk::RltkBuilder;
 
 fn main() -> rltk::BError {
     // Build the terminal.
-    let context = RltkBuilder::simple80x50()
-        .with_title("Roguelike Tutorial")
-        .build()?;
-
+    let context = RltkBuilder::simple80x50().with_title("Garden").build()?;
     let game_state = GameState::new();
 
     rltk::main_loop(context, game_state)
