@@ -73,7 +73,15 @@ where
                 Some(block) => block.hash.clone(),
                 None => Hash::empty(),
             },
-            timestamp: Utc::now().timestamp(),
+            timestamp: if cfg!(test) {
+                // For tests only monotonically increase the timestamp.
+                match self.tip() {
+                    Some(block) => block.payload.timestamp + 1,
+                    None => 0,
+                }
+            } else {
+                Utc::now().timestamp()
+            },
             data,
         })
     }
@@ -215,6 +223,8 @@ pub struct Block<T: BlockData> {
 
 #[cfg(test)]
 mod test {
+    use serde_json::json;
+
     use super::*;
 
     fn get_block_text(block_chain: &BlockChain<String>, index: usize) -> &str {
@@ -371,6 +381,95 @@ mod test {
                 .reconcile(&blocks)
                 .expect_err("It should have failed."),
             ReconcileError::NoMatchingParent
+        );
+    }
+
+    #[test]
+    fn test_serialize_block() {
+        let mut chain = BlockChain::<String>::new();
+        chain.add_data("data 1".into());
+        let value = serde_json::to_value(chain.tip().unwrap())
+            .expect("failed to convert to JSON value");
+
+        // println!("{}", serde_json::to_string_pretty(&value).unwrap());
+
+        assert_eq!(
+            value,
+            json!({
+                "hash": "0aa8416c618aa6f5243c8a273a4398991ed5f8e097d6807b30164d37c8d84b33",
+                "payload": {
+                    "data": "data 1",
+                    "parent": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "timestamp": 0
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_serialize_blocks() {
+        let mut chain = BlockChain::<String>::new();
+        chain.add_data("data 1".into());
+        chain.add_data("data 2".into());
+        let value =
+            serde_json::to_value(chain.blocks).expect("failed to convert to JSON value");
+
+        // println!("{}", serde_json::to_string_pretty(&value).unwrap());
+
+        assert_eq!(
+            value,
+            json!([
+                {
+                    "hash": "0aa8416c618aa6f5243c8a273a4398991ed5f8e097d6807b30164d37c8d84b33",
+                    "payload": {
+                        "data": "data 1",
+                        "parent": "0000000000000000000000000000000000000000000000000000000000000000",
+                        "timestamp": 0
+                    }
+                },
+                {
+                    "hash": "dc8243497f48f2fbb2677646456d4d3f123250a95c838082bfc97716b775b5ff",
+                    "payload": {
+                        "data": "data 2",
+                        "parent": "0aa8416c618aa6f5243c8a273a4398991ed5f8e097d6807b30164d37c8d84b33",
+                        "timestamp": 1
+                    }
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn test_serialize_blocks_slice() {
+        let mut chain = BlockChain::<String>::new();
+        chain.add_data("data 1".into());
+        chain.add_data("data 2".into());
+        chain.add_data("data 3".into());
+        let value = serde_json::to_value(&chain.blocks[1..])
+            .expect("failed to convert to JSON value");
+
+        println!("{}", serde_json::to_string_pretty(&value).unwrap());
+
+        assert_eq!(
+            value,
+            json!([
+              {
+                "hash": "dc8243497f48f2fbb2677646456d4d3f123250a95c838082bfc97716b775b5ff",
+                "payload": {
+                  "data": "data 2",
+                  "parent": "0aa8416c618aa6f5243c8a273a4398991ed5f8e097d6807b30164d37c8d84b33",
+                  "timestamp": 1
+                }
+              },
+              {
+                "hash": "fba2f217aa0411b48bc370769b9018dbbd1996f7d6ef0221e9db829975931330",
+                "payload": {
+                  "data": "data 3",
+                  "parent": "dc8243497f48f2fbb2677646456d4d3f123250a95c838082bfc97716b775b5ff",
+                  "timestamp": 2
+                }
+              }
+            ])
         );
     }
 }
