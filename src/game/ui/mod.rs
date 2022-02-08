@@ -11,6 +11,7 @@ pub enum InputUI {
 
 pub enum InputHandler {
     NewGarden,
+    MainMenu,
 }
 
 impl Default for InputHandler {

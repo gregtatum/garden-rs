@@ -1,4 +1,7 @@
-use crate::garden::TheLand;
+use crate::{
+    chain_store::ChainStore,
+    garden::{Event, TheLand},
+};
 
 use super::{
     drawable::Draw,
@@ -10,6 +13,11 @@ use super::{
 };
 use rltk::Rltk;
 
+pub enum Phase {
+    Playing,
+    Menu,
+}
+
 pub struct GameState {
     player: Player,
     input_device: InputDevice,
@@ -17,13 +25,14 @@ pub struct GameState {
     input_ui: Option<ui::InputUI>,
     input_handler: ui::InputHandler,
     the_land: TheLand,
+    chain_store: Option<Box<dyn ChainStore<Event>>>,
 }
 
 const GAME_W: i32 = 80;
 const GAME_H: i32 = 50;
 
 impl GameState {
-    pub fn new() -> Self {
+    pub fn new(chain_store: Option<Box<dyn ChainStore<Event>>>) -> Self {
         let mut game_state = Self {
             player: Player::new(Position::new(-1, -1)),
             input_device: InputDevice::new(),
@@ -31,6 +40,7 @@ impl GameState {
             input_ui: None,
             input_handler: Default::default(),
             the_land: TheLand::new(),
+            chain_store,
         };
 
         if game_state.gardens.is_empty() {
@@ -47,8 +57,20 @@ impl GameState {
         self.input_handler = ui::InputHandler::NewGarden;
     }
 
+    pub fn show_main_menu(&mut self) {
+        let mut choices =
+            ui::Choices::new(vec![String::from("Save"), String::from("Exit")]);
+        choices.center(GAME_W, GAME_H);
+        self.input_ui = Some(ui::InputUI::Choices(choices));
+        self.input_handler = ui::InputHandler::MainMenu;
+    }
+
     pub fn update(&mut self, ctx: &mut Rltk) {
         self.input_device.update(ctx);
+        if self.input_ui.is_none() && self.input_device.is_esc {
+            eprintln!("show_main_menu");
+            self.show_main_menu();
+        }
         self.player
             .update(&self.input_device, &self.gardens, &self.input_ui);
         for garden in &self.gardens {
@@ -60,12 +82,12 @@ impl GameState {
                 ui::InputUI::TextInput(input) => input.update(&self.input_device, &ctx),
             } {
                 self.input_ui = None;
-                self.handle_input(text);
+                self.handle_input(text, ctx);
             }
         }
     }
 
-    pub fn handle_input(&mut self, text: String) {
+    pub fn handle_input(&mut self, text: String, ctx: &mut Rltk) {
         match self.input_handler {
             ui::InputHandler::NewGarden => {
                 let (hash, plot) = self.the_land.create_garden_plot(text);
@@ -79,6 +101,13 @@ impl GameState {
                     self.player.position = bbox.center();
                 }
                 self.gardens.push(Garden::new(bbox, hash, plot));
+            }
+            ui::InputHandler::MainMenu => {
+                if text == "Save" {
+                    eprintln!("Save");
+                } else if text == "Exit" {
+                    ctx.quit();
+                }
             }
         }
     }
@@ -101,6 +130,9 @@ impl GameState {
 /// The GameState trait requires the main tick for the program.
 impl rltk::GameState for GameState {
     fn tick(&mut self, ctx: &mut Rltk) {
+        if ctx.quitting {
+            eprintln!("Quitting");
+        }
         self.update(ctx);
         self.draw(ctx);
     }

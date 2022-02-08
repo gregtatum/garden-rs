@@ -5,6 +5,8 @@ pub struct InputDevice {
     pub move_intent: Position,
     pub is_enter: bool,
     pub is_backspace: bool,
+    pub is_quitting: bool,
+    pub is_esc: bool,
     pub letter: Option<char>,
 }
 
@@ -14,6 +16,8 @@ impl InputDevice {
             move_intent: Vec2::new(0, 0),
             is_enter: false,
             is_backspace: false,
+            is_quitting: false,
+            is_esc: false,
             letter: None,
         }
     }
@@ -22,6 +26,7 @@ impl InputDevice {
         self.move_intent = Vec2::new(0, 0);
         self.is_enter = false;
         self.is_backspace = false;
+        self.is_esc = false;
         self.letter = None;
 
         if let Some(key) = ctx.key {
@@ -44,6 +49,7 @@ impl InputDevice {
                 VirtualKeyCode::Back => {
                     self.is_backspace = true;
                 }
+                VirtualKeyCode::Escape => self.is_esc = true,
                 _ => {}
             }
 

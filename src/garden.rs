@@ -25,7 +25,7 @@ impl TheLand {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub enum Event {
     CreatePlot(GardenPlot),
 }
@@ -37,7 +37,7 @@ impl SerializedBytes for Event {
 }
 
 /// Create a garden plot.
-#[derive(Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub struct GardenPlot {
     pub uuid: Uuid,
     pub name: String,

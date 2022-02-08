@@ -7,12 +7,22 @@ use ring::digest::{Context, SHA256};
 use serde::{Deserialize, Serialize};
 
 pub trait BlockData:
-    SerializedBytes + Clone + std::cmp::PartialEq + std::marker::Send
+    SerializedBytes
+    + Clone
+    + std::cmp::PartialEq
+    + std::marker::Send
+    + std::fmt::Debug
+    + Serialize
 {
 }
 
 impl<T> BlockData for T where
-    T: SerializedBytes + Clone + std::cmp::PartialEq + std::marker::Send
+    T: SerializedBytes
+        + Clone
+        + std::cmp::PartialEq
+        + std::marker::Send
+        + std::fmt::Debug
+        + Serialize
 {
 }
 

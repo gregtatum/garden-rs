@@ -29,7 +29,7 @@ impl Choices {
             },
             bbox: BBox {
                 top_left: Position::new(0, 0),
-                size: Size::new(width as i32 + 4, values.len() as i32 + 2),
+                size: Size::new(width as i32 + 4, values.len() as i32 + 1),
             },
             // Convert into drawable::Text
             values: values
@@ -63,6 +63,12 @@ impl Choices {
         } else {
             None
         }
+    }
+
+    /// Centers the text input in a given window size.
+    pub fn center(&mut self, w: i32, h: i32) {
+        self.bbox.top_left.x = (w - self.bbox.size.x) / 2;
+        self.bbox.top_left.y = (h - self.bbox.size.y) / 2;
     }
 }
 
