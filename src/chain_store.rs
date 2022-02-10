@@ -2,11 +2,56 @@ use crate::{
     block_chain::{BlockChain, BlockData},
     hash::{Hash, StackStringHash},
 };
-use std::{collections::HashSet, fs, marker::PhantomData, path::PathBuf};
+use std::{borrow::Cow, collections::HashSet, fs, marker::PhantomData, path::PathBuf};
+
+pub struct HeadRef(Cow<'static, str>);
+
+impl HeadRef {
+    /// For now only allow [a-zA-Z0-9-_]. This could be made more permissive, but
+    /// security concerns should be considered, as this is used to serialize to disk.
+    fn validate_name(name: &str) -> bool {
+        for ch in name.chars() {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn str(&self) -> &str {
+        self.0.as_ref()
+    }
+}
+
+impl TryFrom<String> for HeadRef {
+    type Error = ();
+    fn try_from(other: String) -> Result<Self, Self::Error> {
+        if HeadRef::validate_name(&other) {
+            Ok(Self(Cow::Owned(other)))
+        } else {
+            Err(())
+        }
+    }
+}
+
+impl TryFrom<&'static str> for HeadRef {
+    type Error = ();
+    fn try_from(other: &'static str) -> Result<Self, Self::Error> {
+        if HeadRef::validate_name(&other) {
+            Ok(Self(Cow::Borrowed(other)))
+        } else {
+            Err(())
+        }
+    }
+}
 
 pub trait ChainStore<T: BlockData> {
     fn refresh_chains(&mut self) -> Result<(), ChainStoreError>;
-    fn store(&mut self, block_chain: &BlockChain<T>) -> Result<(), ChainStoreError>;
+    fn store(
+        &mut self,
+        block_chain: &BlockChain<T>,
+        head_ref: &HeadRef,
+    ) -> Result<(), ChainStoreError>;
 }
 
 /// Persists blockchains on the file system.
@@ -15,7 +60,7 @@ pub trait ChainStore<T: BlockData> {
 ///     ├── chains
 ///     │   ├── 0123456789abcdef0123456789abcdef
 ///     │   └── 0123456789abcdef0123456789abcdef
-///     └── refs
+///     └── heads
 ///     │   ├── garden-1
 ///     │   └── garden-2
 ///     └── HEAD
@@ -30,14 +75,12 @@ pub struct FsChainStore<T: BlockData> {
     ///   Example path: .garden/chains
     pub chains_path: PathBuf,
 
-    /// Named references to block chains.
-    pub refs_path: PathBuf,
+    /// Named references to the heads of block chains.
+    pub heads_path: PathBuf,
 
     /// The list of all known chains in the store
     pub chains: HashSet<Hash>,
 
-    /// The current head, where new blocks will be written to.
-    pub head_path: PathBuf,
     pub head: Hash,
     pub block_data_: PhantomData<T>,
 }
@@ -47,10 +90,11 @@ pub enum ChainStoreError {
     RootPathNotValid,
     FailedToCreateRootDirectory,
     FailedToCreateChainsDirectory,
-    FailedToCreateRefsDirectory,
+    FailedToCreateHeadsDirectory,
     FailedToCreateDirectory,
     FailedToCreateFile,
     FailedToSerializeToFile,
+    FailedToWriteFile,
     CouldNotReadDirectory,
     InvalidRefHash,
     FailedToReadRef,
@@ -91,11 +135,11 @@ impl<T: BlockData> FsChainStore<T> {
             }
         }
 
-        let mut refs_path = root_path.clone();
-        refs_path.push("refs");
-        if !refs_path.exists() {
-            if fs::create_dir(refs_path.clone()).is_err() {
-                return Err(ChainStoreError::FailedToCreateRefsDirectory);
+        let mut heads_path = root_path.clone();
+        heads_path.push("heads");
+        if !heads_path.exists() {
+            if fs::create_dir(heads_path.clone()).is_err() {
+                return Err(ChainStoreError::FailedToCreateHeadsDirectory);
             }
         }
 
@@ -110,10 +154,9 @@ impl<T: BlockData> FsChainStore<T> {
         let mut chain_store = Self {
             root_path,
             chains_path,
-            refs_path,
+            heads_path,
             chains: HashSet::new(),
             head,
-            head_path,
             block_data_: PhantomData,
         };
         if let Err(err) = chain_store.refresh_chains() {
@@ -122,22 +165,48 @@ impl<T: BlockData> FsChainStore<T> {
 
         Ok(chain_store)
     }
+
+    fn head_path(&self, head_ref: &HeadRef) -> PathBuf {
+        let mut head_path = self.heads_path.clone();
+        head_path.push(head_ref.str());
+        head_path
+    }
 }
 
 impl<T: BlockData> ChainStore<T> for FsChainStore<T> {
     fn refresh_chains(&mut self) -> Result<(), ChainStoreError> {
-        let paths = fs::read_dir(self.chains_path.clone());
-        if paths.is_err() {
+        let dir_entries = fs::read_dir(self.chains_path.clone());
+        if dir_entries.is_err() {
             return Err(ChainStoreError::CouldNotReadDirectory);
         }
 
         self.chains.clear();
-        for path in paths.unwrap() {
-            if let Ok(path) = path {
-                let file_name = path.file_name();
-                let path_str: &str = &file_name.to_string_lossy();
-                if let Ok(hash) = Hash::try_from(path_str) {
+        let mut path_str = String::new();
+        for dir_entry in dir_entries.unwrap() {
+            if dir_entry.is_err() {
+                continue;
+            }
+            let dir_entry = dir_entry.unwrap();
+
+            let postfix_dir_entries = fs::read_dir(dir_entry.path());
+            if postfix_dir_entries.is_err() {
+                return Err(ChainStoreError::CouldNotReadDirectory);
+            }
+            let prefix_file_name = dir_entry.file_name();
+            let prefix_path_str: &str = &prefix_file_name.to_string_lossy();
+            for postfix_dir_entry in postfix_dir_entries.unwrap() {
+                if postfix_dir_entry.is_err() {
+                    continue;
+                }
+                let postfix_dir_entry = postfix_dir_entry.unwrap();
+                path_str.clear();
+                path_str.push_str(prefix_path_str);
+                path_str.push_str(&postfix_dir_entry.file_name().to_string_lossy());
+
+                if let Ok(hash) = Hash::try_from(path_str.as_str()) {
                     self.chains.insert(hash);
+                } else {
+                    eprintln!("Could not read chain {:?}", dir_entry);
                 }
             }
         }
@@ -145,7 +214,11 @@ impl<T: BlockData> ChainStore<T> for FsChainStore<T> {
         Ok(())
     }
 
-    fn store(&mut self, block_chain: &BlockChain<T>) -> Result<(), ChainStoreError> {
+    fn store(
+        &mut self,
+        block_chain: &BlockChain<T>,
+        head_ref: &HeadRef,
+    ) -> Result<(), ChainStoreError> {
         let tip = block_chain.tip();
         if tip.is_none() {
             // This nothing to serialize.
@@ -222,6 +295,10 @@ impl<T: BlockData> ChainStore<T> for FsChainStore<T> {
             return Err(ChainStoreError::FailedToSerializeToFile);
         };
 
+        if let Err(_) = fs::write(self.head_path(head_ref), String::from(&(tip.hash))) {
+            return Err(ChainStoreError::FailedToWriteFile);
+        }
+
         Ok(())
     }
 }
@@ -275,7 +352,7 @@ mod test {
             .expect("Failed to create ChainStore");
 
         assert!(subpath_exists(&path, "chains"));
-        assert!(subpath_exists(&path, "refs"));
+        assert!(subpath_exists(&path, "heads"));
     }
 
     #[test]
@@ -287,7 +364,7 @@ mod test {
             .expect("Failed to create ChainStore");
 
         assert!(subpath_exists(&path, "chains"));
-        assert!(subpath_exists(&path, "refs"));
+        assert!(subpath_exists(&path, "heads"));
     }
 
     #[test]
@@ -300,61 +377,6 @@ mod test {
             FsChainStore::<Event>::try_new(path.clone()).unwrap_err(),
             ChainStoreError::RootPathNotValid
         );
-    }
-
-    #[test]
-    fn test_chainstore_try_new_chains() {
-        let tmp_dir = TempDir::new("example").expect("Failed to create a temp directory");
-        let path: PathBuf = tmp_dir.into_path();
-        let chains = subpath(&path, "chains");
-        let refs = subpath(&path, "refs");
-
-        fs::create_dir(chains.clone()).expect("Failed to create chains dir");
-        fs::create_dir(refs.clone()).expect("Failed to create refs dir");
-
-        assert!(chains.exists());
-        assert!(refs.exists());
-
-        touch(&subpath(
-            &chains,
-            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        ));
-        touch(&subpath(
-            &chains,
-            "1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        ));
-        touch(&subpath(
-            &chains,
-            "2123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        ));
-
-        touch(&subpath(&refs, "garden-1"));
-        touch(&subpath(&refs, "garden-2"));
-
-        let store = FsChainStore::<Event>::try_new(path.clone())
-            .expect("Failed to create ChainStore");
-
-        assert_eq!(store.chains.len(), 3, "Three chains were found.");
-
-        store
-            .chains
-            .get(&hash(
-                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-            ))
-            .expect("Failed to find expected chain.");
-        store
-            .chains
-            .get(&hash(
-                "1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-            ))
-            .expect("Failed to find expected chain.");
-
-        store
-            .chains
-            .get(&hash(
-                "2123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-            ))
-            .expect("Failed to find expected chain.");
     }
 
     fn ls(path: &PathBuf) -> Vec<String> {
@@ -402,6 +424,7 @@ mod test {
         pub path: PathBuf,
         pub chain_store: FsChainStore<String>,
         pub chain: BlockChain<String>,
+        pub head_ref: HeadRef,
     }
 
     impl ChainStoreTest {
@@ -412,12 +435,15 @@ mod test {
             let chain_store = FsChainStore::<String>::try_new(path.clone())
                 .expect("Failed to create ChainStore");
             let chain = BlockChain::<String>::new();
+            let head_ref =
+                HeadRef::try_from("my-garden").expect("Failed to create HeadRef");
 
             Self {
                 tmp_dir,
                 path,
                 chain_store,
                 chain,
+                head_ref,
             }
         }
     }
@@ -443,21 +469,30 @@ mod test {
             ref mut chain_store,
             ref mut chain,
             ref path,
+            ref head_ref,
             ..
         } = test;
 
         assert_eq!(ls(&chain_store.chains_path), Vec::<String>::new());
+        assert_eq!(ls(&join_path(path, &["heads"])), Vec::<String>::new(),);
 
         // Store each time a block is added.
         chain.add_data("data 1".into());
         chain.add_data("data 2".into());
         chain.add_data("data 3".into());
         chain.add_data("data 4".into());
-        chain_store.store(&chain).expect("Failed to store chains.");
+        chain_store
+            .store(&chain, head_ref)
+            .expect("Failed to store chains.");
 
         assert_eq!(
             ls(&join_path(path, &["chains"])),
             vec![String::from(HASH_4_SUBFOLDER)],
+        );
+
+        assert_eq!(
+            ls(&join_path(path, &["heads"])),
+            vec![String::from("my-garden")],
         );
     }
 
@@ -468,16 +503,21 @@ mod test {
             ref mut chain_store,
             ref mut chain,
             ref path,
+            ref head_ref,
             ..
         } = test;
 
         // Store each time a block is added.
         chain.add_data("data 1".into());
         chain.add_data("data 2".into());
-        chain_store.store(&chain).expect("Failed to store chains.");
+        chain_store
+            .store(&chain, head_ref)
+            .expect("Failed to store chains.");
         chain.add_data("data 3".into());
         chain.add_data("data 4".into());
-        chain_store.store(&chain).expect("Failed to store chains.");
+        chain_store
+            .store(&chain, head_ref)
+            .expect("Failed to store chains.");
 
         assert_eq!(
             ls(&join_path(path, &["chains"])),
@@ -495,18 +535,27 @@ mod test {
             ref mut chain_store,
             ref mut chain,
             ref path,
+            ref head_ref,
             ..
         } = test;
 
         // Store each time a block is added.
         chain.add_data("data 1".into());
-        chain_store.store(&chain).expect("Failed to store chains.");
+        chain_store
+            .store(&chain, head_ref)
+            .expect("Failed to store chains.");
         chain.add_data("data 2".into());
-        chain_store.store(&chain).expect("Failed to store chains.");
+        chain_store
+            .store(&chain, head_ref)
+            .expect("Failed to store chains.");
         chain.add_data("data 3".into());
-        chain_store.store(&chain).expect("Failed to store chains.");
+        chain_store
+            .store(&chain, head_ref)
+            .expect("Failed to store chains.");
         chain.add_data("data 4".into());
-        chain_store.store(&chain).expect("Failed to store chains.");
+        chain_store
+            .store(&chain, head_ref)
+            .expect("Failed to store chains.");
 
         assert_eq!(
             ls(&join_path(path, &["chains"])),
@@ -526,12 +575,15 @@ mod test {
             ref mut chain_store,
             ref mut chain,
             ref path,
+            ref head_ref,
             ..
         } = test;
 
         chain.add_data("data 1".into());
         chain.add_data("data 2".into());
-        chain_store.store(&chain).expect("Failed to store chains.");
+        chain_store
+            .store(&chain, head_ref)
+            .expect("Failed to store chains.");
 
         let file_contents = fs::read_to_string(&join_path(
             path,
@@ -570,16 +622,20 @@ mod test {
             ref mut chain_store,
             ref mut chain,
             ref path,
+            ref head_ref,
             ..
         } = test;
 
         chain.add_data("data 1".into());
         chain.add_data("data 2".into());
-        chain_store.store(&chain).expect("Failed to store chains.");
+        chain_store
+            .store(&chain, head_ref)
+            .expect("Failed to store chains.");
         chain.add_data("data 3".into());
         chain.add_data("data 4".into());
-        println!("---------------------------------");
-        chain_store.store(&chain).expect("Failed to store chains.");
+        chain_store
+            .store(&chain, head_ref)
+            .expect("Failed to store chains.");
 
         let file_contents = fs::read_to_string(&join_path(
             path,
@@ -587,12 +643,6 @@ mod test {
         ))
         .expect("Failed to read file.");
 
-        // println!("{}", file_contents);
-        // println!(
-        //     "{}",
-        //     serde_json::from_str::<serde_json::Value>(&file_contents)
-        //         .expect("JSON was not well-formatted")
-        // );
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&file_contents)
                 .expect("JSON was not well-formatted"),
@@ -615,5 +665,48 @@ mod test {
                 },
             ])
         );
+    }
+
+    #[test]
+    fn test_chainstore_store_load() {
+        let mut test = ChainStoreTest::new();
+        let ChainStoreTest {
+            ref mut chain_store,
+            ref mut chain,
+            ref path,
+            ref head_ref,
+            ..
+        } = test;
+
+        chain.add_data("data 1".into());
+        chain.add_data("data 2".into());
+        chain_store
+            .store(&chain, head_ref)
+            .expect("Failed to store chains.");
+        chain.add_data("data 3".into());
+        chain.add_data("data 4".into());
+        chain_store
+            .store(&chain, head_ref)
+            .expect("Failed to store chains.");
+
+        let mut chain_store = FsChainStore::<String>::try_new(path.clone())
+            .expect("Failed to create ChainStore");
+        println!("{:#?}", chain_store);
+        chain_store
+            .refresh_chains()
+            .expect("Failed to refresh chains");
+        let mut chain_store = FsChainStore::<String>::try_new(path.clone())
+            .expect("Failed to create ChainStore");
+        println!("{:#?}", chain_store);
+
+        // TODO - Create a block iterator that works regardless of chain memory layout.
+
+        // [chain: [block(4), block(5), block(6)]][chain: [block(1), block(2), block(3)]]
+        // iter -> 6, 5, 4, 3, 2, 1
+
+        // chain_store.iter_head();
+        // chain_store.iter(hash);
+
+        // let chain = BlockChain::<String>::new();
     }
 }

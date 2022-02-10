@@ -1,5 +1,5 @@
 use crate::{
-    chain_store::ChainStore,
+    chain_store::{ChainStore, HeadRef},
     garden::{Event, TheLand},
 };
 
@@ -25,14 +25,14 @@ pub struct GameState {
     input_ui: Option<ui::InputUI>,
     input_handler: ui::InputHandler,
     the_land: TheLand,
-    chain_store: Option<Box<dyn ChainStore<Event>>>,
+    chain_store: Box<dyn ChainStore<Event>>,
 }
 
 const GAME_W: i32 = 80;
 const GAME_H: i32 = 50;
 
 impl GameState {
-    pub fn new(chain_store: Option<Box<dyn ChainStore<Event>>>) -> Self {
+    pub fn new(chain_store: Box<dyn ChainStore<Event>>) -> Self {
         let mut game_state = Self {
             player: Player::new(Position::new(-1, -1)),
             input_device: InputDevice::new(),
@@ -104,7 +104,9 @@ impl GameState {
             }
             ui::InputHandler::MainMenu => {
                 if text == "Save" {
-                    eprintln!("Save");
+                    self.chain_store
+                        .store(&self.the_land.block_chain, &self.the_land.head_ref)
+                        .expect("Failed to store the block chain");
                 } else if text == "Exit" {
                     ctx.quit();
                 }

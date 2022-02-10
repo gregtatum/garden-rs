@@ -1,5 +1,6 @@
 use crate::{
     block_chain::{BlockChain, SerializedBytes},
+    chain_store::HeadRef,
     hash::Hash,
 };
 use bincode;
@@ -8,14 +9,18 @@ use std::borrow::Cow;
 use uuid::Uuid;
 
 pub struct TheLand {
-    block_chain: BlockChain<Event>,
+    pub block_chain: BlockChain<Event>,
+    pub head_ref: HeadRef,
 }
 
 impl TheLand {
     pub fn new() -> Self {
-        Self {
+        let mut the_land = Self {
             block_chain: BlockChain::<Event>::new(),
-        }
+            head_ref: HeadRef::try_from("my-garden").expect("Failed to create HeadRef"),
+        };
+
+        the_land
     }
 
     pub fn create_garden_plot(&mut self, name: String) -> (Hash, GardenPlot) {

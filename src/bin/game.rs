@@ -24,7 +24,7 @@ fn main() -> rltk::BError {
         FsChainStore::try_new(cli_options.save_path)
             .expect("Unable to create the chain store."),
     );
-    let game_state = GameState::new(Some(chain_store));
+    let game_state = GameState::new(chain_store);
 
     rltk::main_loop(context, game_state)
 }
