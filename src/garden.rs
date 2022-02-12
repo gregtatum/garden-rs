@@ -1,45 +1,8 @@
-use crate::{
-    block_chain::{BlockChain, SerializedBytes},
-    chain_store::HeadRef,
-    hash::Hash,
-};
+use crate::block_chain::SerializedBytes;
 use bincode;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use uuid::Uuid;
-
-pub struct TheLand {
-    pub block_chain: BlockChain<Event>,
-    pub head_ref: HeadRef,
-}
-
-impl TheLand {
-    pub fn new() -> Self {
-        let mut the_land = Self {
-            block_chain: BlockChain::<Event>::new(),
-            head_ref: HeadRef::try_from("my-garden").expect("Failed to create HeadRef"),
-        };
-
-        the_land
-    }
-
-    pub fn create_garden_plot(&mut self, name: String) -> (Hash, GardenPlot) {
-        let plot = GardenPlot::new(name);
-        let block = self.block_chain.add_data(Event::CreatePlot(plot.clone()));
-        (block.hash.clone(), plot)
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
-pub enum Event {
-    CreatePlot(GardenPlot),
-}
-
-impl SerializedBytes for Event {
-    fn serialized_bytes(&self) -> Cow<[u8]> {
-        Cow::from(bincode::serialize(self).expect("Unable to serialize Event."))
-    }
-}
 
 /// Create a garden plot.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
@@ -70,7 +33,10 @@ impl GardenPlot {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::block_chain::{BlockChain, BlockData};
+    use crate::{
+        block_chain::{BlockChain, BlockData},
+        Action,
+    };
     use insta::assert_display_snapshot;
     use serde_json::Value;
     use std::collections::HashMap;
@@ -154,8 +120,8 @@ mod test {
 
     #[test]
     fn test_create_garden_plot() {
-        let mut block_chain = BlockChain::<Event>::new();
-        block_chain.add_data(Event::CreatePlot(GardenPlot::new("Greg's plot".into())));
+        let mut block_chain = BlockChain::<Action>::new();
+        block_chain.add_data(Action::CreatePlot(GardenPlot::new("Greg's plot".into())));
         assert_display_snapshot!(serialize_for_test(&block_chain), @r###"
         [
           {

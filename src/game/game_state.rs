@@ -1,7 +1,4 @@
-use crate::{
-    chain_store::{ChainStore, HeadRef},
-    garden::{Event, TheLand},
-};
+use crate::{chain_store::ChainStore, Action, Store};
 
 use super::{
     drawable::Draw,
@@ -24,22 +21,22 @@ pub struct GameState {
     gardens: Vec<Garden>,
     input_ui: Option<ui::InputUI>,
     input_handler: ui::InputHandler,
-    the_land: TheLand,
-    chain_store: Box<dyn ChainStore<Event>>,
+    the_land: Store,
+    chain_store: Box<dyn ChainStore<Action>>,
 }
 
 const GAME_W: i32 = 80;
 const GAME_H: i32 = 50;
 
 impl GameState {
-    pub fn new(chain_store: Box<dyn ChainStore<Event>>) -> Self {
+    pub fn new(chain_store: Box<dyn ChainStore<Action>>) -> Self {
         let mut game_state = Self {
             player: Player::new(Position::new(-1, -1)),
             input_device: InputDevice::new(),
             gardens: vec![],
             input_ui: None,
             input_handler: Default::default(),
-            the_land: TheLand::new(),
+            the_land: Store::new(),
             chain_store,
         };
 

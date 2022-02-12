@@ -315,7 +315,7 @@ fn resolve_ref(path: &PathBuf) -> Result<Hash, ChainStoreError> {
 
 #[cfg(test)]
 mod test {
-    use crate::garden::Event;
+    use crate::Action;
 
     use super::*;
     use pretty_assertions::assert_eq;
@@ -348,7 +348,7 @@ mod test {
     fn test_chainstore_try_new() {
         let tmp_dir = TempDir::new("example").expect("Failed to create a temp directory");
         let path: PathBuf = tmp_dir.into_path();
-        FsChainStore::<Event>::try_new(path.clone())
+        FsChainStore::<Action>::try_new(path.clone())
             .expect("Failed to create ChainStore");
 
         assert!(subpath_exists(&path, "chains"));
@@ -360,7 +360,7 @@ mod test {
         let tmp_dir = TempDir::new("example").expect("Failed to create a temp directory");
         let mut path: PathBuf = tmp_dir.into_path();
         path.push(".garden");
-        FsChainStore::<Event>::try_new(path.clone())
+        FsChainStore::<Action>::try_new(path.clone())
             .expect("Failed to create ChainStore");
 
         assert!(subpath_exists(&path, "chains"));
@@ -374,7 +374,7 @@ mod test {
         path.push("not-here");
         path.push(".garden");
         assert_eq!(
-            FsChainStore::<Event>::try_new(path.clone()).unwrap_err(),
+            FsChainStore::<Action>::try_new(path.clone()).unwrap_err(),
             ChainStoreError::RootPathNotValid
         );
     }
