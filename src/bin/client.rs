@@ -1,5 +1,8 @@
 use futures::prelude::*;
-use garden::{chain_store::FsChainStore, Action};
+use garden::{
+    chain_store::{FsChainStore, HeadRef},
+    Action,
+};
 use libp2p::{
     core::upgrade,
     floodsub::{self, Floodsub, FloodsubEvent},
@@ -34,7 +37,10 @@ struct CliOptions {
 async fn main() -> Result<(), Box<dyn Error>> {
     let cli_options = CliOptions::from_args();
 
-    let _chain_store = FsChainStore::<Action>::try_new(cli_options.save_path);
+    let _chain_store = FsChainStore::<Action>::try_new(
+        cli_options.save_path,
+        HeadRef::try_from("my-garden").expect("Failed to create HeadRef"),
+    );
 
     // Create a random PeerId
     let local_key = identity::Keypair::generate_ed25519();

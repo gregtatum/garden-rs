@@ -4,7 +4,7 @@ use crate::hash::Hash;
 
 use chrono::Utc;
 use ring::digest::{Context, SHA256};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 pub trait BlockData:
     SerializedBytes
@@ -12,6 +12,7 @@ pub trait BlockData:
     + std::cmp::PartialEq
     + std::marker::Send
     + std::fmt::Debug
+    + DeserializeOwned
     + Serialize
 {
 }
@@ -22,6 +23,7 @@ impl<T> BlockData for T where
         + std::cmp::PartialEq
         + std::marker::Send
         + std::fmt::Debug
+        + DeserializeOwned
         + Serialize
 {
 }
@@ -171,6 +173,12 @@ where
     }
 }
 
+impl<T: BlockData> From<Vec<Block<T>>> for BlockChain<T> {
+    fn from(blocks: Vec<Block<T>>) -> Self {
+        Self { blocks }
+    }
+}
+
 /// Debug print the string content of blocks.
 #[allow(dead_code)] // Useful for debugging, and used in tests.
 fn debug_blocks(blocks: &[Block<String>]) -> Vec<&str> {
@@ -196,16 +204,13 @@ fn verify_blocks<T: BlockData>(blocks: &[Block<T>], mut parent: Hash) -> bool {
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone, Eq, Hash)]
-pub struct BlockPayload<T>
-where
-    T: BlockData,
-{
+pub struct BlockPayload<T> {
     pub parent: Hash,
     pub timestamp: i64,
     pub data: T,
 }
 
-impl<T> BlockPayload<T>
+impl<'a, T> BlockPayload<T>
 where
     T: BlockData,
 {
@@ -226,7 +231,7 @@ where
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
-pub struct Block<T: BlockData> {
+pub struct Block<T> {
     pub hash: Hash,
     pub payload: BlockPayload<T>,
 }
@@ -458,7 +463,7 @@ mod test {
         let value = serde_json::to_value(&chain.blocks[1..])
             .expect("failed to convert to JSON value");
 
-        println!("{}", serde_json::to_string_pretty(&value).unwrap());
+        // println!("{}", serde_json::to_string_pretty(&value).unwrap());
 
         assert_eq!(
             value,

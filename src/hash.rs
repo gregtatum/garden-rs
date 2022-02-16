@@ -136,7 +136,7 @@ impl StackStringHash {
         self.str()
     }
 
-    pub fn str<'a>(&'a mut self) -> &'a str {
+    pub fn str<'a>(&'a self) -> &'a str {
         // See the test test_stack_string_fuzzed below where this is fuzzed.
         // The data is assumed to be only ascii-ranged code points.
         unsafe { std::str::from_utf8_unchecked(&self.data) }

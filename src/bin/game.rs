@@ -3,7 +3,10 @@
 
 use std::path::PathBuf;
 
-use garden::{chain_store::FsChainStore, game::game_state::GameState};
+use garden::{
+    chain_store::{FsChainStore, HeadRef},
+    game::game_state::GameState,
+};
 use rltk::RltkBuilder;
 use structopt::StructOpt;
 
@@ -21,8 +24,11 @@ fn main() -> rltk::BError {
 
     let cli_options = CliOptions::from_args();
     let chain_store = Box::new(
-        FsChainStore::try_new(cli_options.save_path)
-            .expect("Unable to create the chain store."),
+        FsChainStore::try_new(
+            cli_options.save_path,
+            HeadRef::try_from("my-garden").expect("Failed to create HeadRef"),
+        )
+        .expect("Unable to create the chain store."),
     );
     let game_state = GameState::new(chain_store);
 

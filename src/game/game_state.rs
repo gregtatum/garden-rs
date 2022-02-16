@@ -29,14 +29,14 @@ const GAME_W: i32 = 80;
 const GAME_H: i32 = 50;
 
 impl GameState {
-    pub fn new(chain_store: Box<dyn ChainStore<Action>>) -> Self {
+    pub fn new(mut chain_store: Box<dyn ChainStore<Action>>) -> Self {
         let mut game_state = Self {
             player: Player::new(Position::new(-1, -1)),
             input_device: InputDevice::new(),
             gardens: vec![],
             input_ui: None,
             input_handler: Default::default(),
-            the_land: Store::new(),
+            the_land: Store::new(&mut *chain_store),
             chain_store,
         };
 
@@ -102,7 +102,7 @@ impl GameState {
             ui::InputHandler::MainMenu => {
                 if text == "Save" {
                     self.chain_store
-                        .store(&self.the_land.block_chain, &self.the_land.head_ref)
+                        .store(&self.the_land.block_chain)
                         .expect("Failed to store the block chain");
                 } else if text == "Exit" {
                     ctx.quit();

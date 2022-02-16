@@ -4,29 +4,24 @@ use crate::{
     block_chain::{Block, BlockChain},
     chain_store::HeadRef,
     garden::GardenPlot,
-    reducers, Action, Hash,
+    reducers, Action, ChainStore, Hash,
 };
 
 pub struct Store {
     pub block_chain: BlockChain<Action>,
-    pub head_ref: HeadRef,
     pub state: State,
 }
 
 impl Store {
-    pub fn new() -> Self {
+    pub fn new(chain_store: &mut dyn ChainStore<Action>) -> Self {
         let mut store = Self {
             block_chain: BlockChain::<Action>::new(),
-            head_ref: HeadRef::try_from("my-garden").expect("Failed to create HeadRef"),
             state: State::new(),
         };
 
-        // let mut prev_hash = Hash::empty();
-        // for block in store.block_chain.root_iter() {
-        //     if prev_hash !==
-        //     store.reduce(prev_hash, block);
-        //     prev_hash = block.hash;
-        // }
+        store
+            .load_untrusted_chain_store(chain_store)
+            .expect("The block chain failed to reduce");
 
         store
     }
@@ -37,8 +32,24 @@ impl Store {
         (block.hash.clone(), plot)
     }
 
-    pub fn reduce_untrusted(&mut self, prev_hash: Hash, block: &Block<Action>) {
-        // block.hash()
+    pub fn load_untrusted_chain_store(
+        &mut self,
+        chain_store: &mut dyn ChainStore<Action>,
+    ) -> Result<(), ()> {
+        let mut prev_hash = Hash::empty();
+        // TODO
+
+        // for block in self.store.block_chain.root_iter() {
+        //     if prev_hash != block.hash {
+        //         return Err(());
+        //     }
+        //     if block.payload.hash() != block.hash {
+        //         return Err(());
+        //     }
+        //     self.state = store.reduce(block.payload);
+        //     prev_hash = block.hash;
+        // }
+        Ok(())
     }
 }
 
@@ -53,7 +64,7 @@ impl State {
 
     pub fn reduce(&self, event: &Action) -> State {
         State {
-            my_garden: reducers::garden(self.my_garden, event),
+            my_garden: reducers::garden(self.my_garden.clone(), event),
         }
     }
 }
