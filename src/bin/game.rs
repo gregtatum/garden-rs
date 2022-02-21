@@ -30,7 +30,7 @@ fn main() -> rltk::BError {
         )
         .expect("Unable to create the chain store."),
     );
-    let game_state = GameState::new(chain_store);
+    let game_state = GameState::try_new(chain_store)?;
 
     rltk::main_loop(context, game_state)
 }

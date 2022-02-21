@@ -1,4 +1,5 @@
-use crate::{chain_store::ChainStore, Action, StateStore};
+use crate::{actions, chain_store::ChainStore, Action, StateStore};
+use anyhow::Result;
 
 use super::{
     drawable::Draw,
@@ -28,21 +29,21 @@ const GAME_W: i32 = 80;
 const GAME_H: i32 = 50;
 
 impl GameState {
-    pub fn new(mut chain_store: Box<dyn ChainStore<Action>>) -> Self {
+    pub fn try_new(chain_store: Box<dyn ChainStore<Action>>) -> Result<Self> {
         let mut game_state = Self {
             player: Player::new(Position::new(-1, -1)),
             input_device: InputDevice::new(),
             gardens: vec![],
             input_ui: None,
             input_handler: Default::default(),
-            state_store: StateStore::new(chain_store),
+            state_store: StateStore::try_new(chain_store)?,
         };
 
         if game_state.gardens.is_empty() {
             game_state.ask_new_garden()
         }
 
-        game_state
+        Ok(game_state)
     }
 
     pub fn ask_new_garden(&mut self) {
@@ -85,22 +86,22 @@ impl GameState {
     pub fn handle_input(&mut self, text: String, ctx: &mut Rltk) {
         match self.input_handler {
             ui::InputHandler::NewGarden => {
-                let (hash, plot) = self.state_store.create_garden_plot(text);
-                let margin = 10;
-                let bbox = BBox {
-                    top_left: Position::new(margin, margin),
-                    size: Size::new(GAME_W - margin * 2, GAME_H - margin * 2),
-                };
-                if self.gardens.len() == 0 {
-                    // This is the first garden, place the player in it.
-                    self.player.position = bbox.center();
-                }
-                self.gardens.push(Garden::new(bbox, hash, plot));
+                self.state_store.dispatch(actions::create_garden_plot(text));
+                // let margin = 10;
+                // let bbox = BBox {
+                //     top_left: Position::new(margin, margin),
+                //     size: Size::new(GAME_W - margin * 2, GAME_H - margin * 2),
+                // };
+                // if self.gardens.len() == 0 {
+                //     // This is the first garden, place the player in it.
+                //     self.player.position = bbox.center();
+                // }
+                // self.gardens.push(Garden::new(bbox, hash, plot));
             }
             ui::InputHandler::MainMenu => {
                 if text == "Save" {
                     self.state_store
-                        .chain_store
+                        .chains
                         .persist()
                         .expect("Failed to store the block chain");
                 } else if text == "Exit" {

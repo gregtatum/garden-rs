@@ -1,8 +1,7 @@
-use std::{borrow::Cow, collections::VecDeque};
-
 use crate::{hash::Hash, utils::get_timestamp};
+use std::{borrow::Cow, collections::VecDeque};
+use thiserror::Error;
 
-use chrono::Utc;
 use ring::digest::{Context, SHA256};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -40,10 +39,13 @@ impl SerializedBytes for String {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Error, Debug, PartialEq, Clone)]
 pub enum ReconcileError {
+    #[error("there was no matching parent")]
     NoMatchingParent,
+    #[error("the foreign blocks were shorter")]
     ShorterForeignBlocks,
+    #[error("the blocks were invalid")]
     MalformedBlocks,
 }
 
@@ -104,6 +106,16 @@ where
             }
         }
         None
+    }
+
+    /// Returns true if the chain is not complete, e.g. there is not root block.
+    pub fn is_partial(&self) -> bool {
+        if let Some(block) = self.blocks.front() {
+            if block.payload.parent.is_root() {
+                return false;
+            }
+        }
+        true
     }
 
     pub fn reconcile(

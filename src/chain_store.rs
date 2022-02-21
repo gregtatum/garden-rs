@@ -1,18 +1,9 @@
 use crate::{
     block_chain::{Block, BlockChain, BlockData},
     hash::{Hash, StackStringHash},
-    utils::map_err,
 };
-use anyhow::bail;
-use std::{
-    borrow::Cow,
-    cell::{RefCell, RefMut},
-    collections::HashSet,
-    fs,
-    io::BufReader,
-    marker::PhantomData,
-    path::{Path, PathBuf},
-};
+use anyhow::{bail, Context, Result};
+use std::{borrow::Cow, collections::HashSet, fs, io::BufReader, path::PathBuf};
 use thiserror::Error;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -55,16 +46,23 @@ impl TryFrom<&'static str> for HeadRef {
     }
 }
 
-pub enum ChainStoreIterError {
-    UnableLoadChunk,
-}
-
-// pub trait ChainStore<T: BlockData>: Iterator<Item = Result<T, ChainStoreIterError>>
-
 pub trait ChainStore<T: BlockData> {
-    fn refresh_chains(&mut self) -> Result<(), ChainStoreError>;
-    fn persist(&mut self) -> Result<(), ChainStoreError>;
-    fn iter(&self) -> Box<dyn DoubleEndedIterator<Item = &Block<T>> + '_>;
+    /// The list of known hashes without doing additional loading. Blocks can be
+    /// grouped together into chain chunks.
+    fn get_known_hashes(&mut self) -> Result<HashSet<Hash>>;
+
+    /// Persist the blocks to the backing storage.
+    fn persist(&mut self) -> Result<()>;
+
+    /// Iterate from root to tip all of the loaded blocks. The first block is not
+    /// guaranteed to be rooted.
+    fn iter_loaded(&self) -> Box<dyn DoubleEndedIterator<Item = &Block<T>> + '_>;
+
+    /// Iterate through all the chains from the root. This is fallible since the chain
+    /// store may need to deserialize blocks from storage.
+    fn iter_all(&mut self)
+        -> Result<Box<dyn DoubleEndedIterator<Item = &Block<T>> + '_>>;
+
     fn add(&mut self, data: T) -> &Block<T>;
     fn head_ref(&self) -> &HeadRef;
 }
@@ -105,9 +103,6 @@ pub struct FsChainStore<T: BlockData> {
     /// Named references to the heads of block chains.
     pub heads_path: PathBuf,
 
-    /// The list of all known chains in the store
-    pub chain_hashes: HashSet<Hash>,
-
     /// The ref to the head. This is a string like "garden-1". This points to
     /// a file in .garden/heads/garden-1. That file contains the hash of a block.
     /// This block must be serialized in the .garden/chains folder.
@@ -119,92 +114,25 @@ pub struct FsChainStore<T: BlockData> {
     unpersisted_block_count: usize,
 }
 
-#[derive(Error, Debug)]
-pub enum ChainStoreError {
-    #[error("the root path was not valid")]
-    RootPathNotValid,
-    #[error("failed to create the root directory")]
-    FailedToCreateRootDirectory,
-    #[error("failed to create chains directory")]
-    FailedToCreateChainsDirectory,
-    #[error("failed to create heads directory")]
-    FailedToCreateHeadsDirectory,
-    #[error("failed to create directory")]
-    FailedToCreateDirectory,
-    #[error("failed to create file")]
-    FailedToCreateFile,
-    #[error("failed to serialize to file")]
-    FailedToSerializeToFile,
-    #[error("failed to write file")]
-    FailedToWriteFile,
-    #[error("could not read directory")]
-    CouldNotReadDirectory,
-    #[error("invalid ref hash")]
-    InvalidRefHash,
-    #[error("failed to read ref")]
-    FailedToReadRef,
-    #[error("json serialization error: {description:?}")]
-    JsonSerializationError {
-        source: serde_json::Error,
-        description: &'static str,
-    },
-    #[error("file system error: {description:?} at {path:?}")]
-    FileSystem {
-        source: std::io::Error,
-        path: Option<PathBuf>,
-        description: &'static str,
-    },
-}
-
-impl<P: AsRef<Path>> From<(std::io::Error, P, &'static str)> for ChainStoreError {
-    fn from(tuple: (std::io::Error, P, &'static str)) -> Self {
-        Self::FileSystem {
-            source: tuple.0,
-            path: Some(tuple.1.as_ref().to_path_buf()),
-            description: tuple.2,
-        }
-    }
-}
-
-impl From<(std::io::Error, &'static str)> for ChainStoreError {
-    fn from(tuple: (std::io::Error, &'static str)) -> Self {
-        Self::FileSystem {
-            source: tuple.0,
-            path: None,
-            description: tuple.1,
-        }
-    }
-}
-
-map_err!(ChainStoreError, JsonSerializationError, serde_json::Error);
-
-// impl From<(serde_json::Error, &'static str)) -> Self {
-
 impl<T: BlockData> FsChainStore<T> {
-    pub fn try_new(
-        root_path: PathBuf,
-        head_ref: HeadRef,
-    ) -> Result<Self, ChainStoreError> {
+    pub fn try_new(root_path: PathBuf, head_ref: HeadRef) -> Result<Self> {
         if !root_path.as_path().exists() {
             let parent = root_path.as_path().parent();
             if parent.is_none() {
-                // This file path does not exist.
-                return Err(ChainStoreError::RootPathNotValid);
+                bail!("the root path is not valid: {}", root_path.display())
             }
 
             let parent = parent.unwrap();
             if !parent.is_dir() {
-                // The parent directory is a file.
-                return Err(ChainStoreError::RootPathNotValid);
+                bail!("the parent path is a file: {}", parent.display());
             }
 
             // Make the directory.
             if fs::create_dir(root_path.clone()).is_err() {
-                return Err(ChainStoreError::FailedToCreateRootDirectory);
+                bail!("failed to make the root path for {}", root_path.display());
             }
         } else if !root_path.as_path().is_dir() {
-            // A file exists at that path.
-            return Err(ChainStoreError::RootPathNotValid);
+            bail!("A file exists at that root path {}", root_path.display());
         }
 
         // Double check the logic above was correct.
@@ -214,7 +142,10 @@ impl<T: BlockData> FsChainStore<T> {
         chains_path.push("chains");
         if !chains_path.exists() {
             if fs::create_dir(chains_path.clone()).is_err() {
-                return Err(ChainStoreError::FailedToCreateChainsDirectory);
+                bail!(
+                    "failed to create chains directory {}",
+                    chains_path.display()
+                )
             }
         }
 
@@ -222,25 +153,18 @@ impl<T: BlockData> FsChainStore<T> {
         heads_path.push("heads");
         if !heads_path.exists() {
             if fs::create_dir(heads_path.clone()).is_err() {
-                return Err(ChainStoreError::FailedToCreateHeadsDirectory);
+                bail!("failed to create heads directory {}", heads_path.display())
             }
         }
 
-        let mut chain_store = Self {
+        Ok(Self {
             root_path,
             chains_path,
             heads_path,
-            chain_hashes: HashSet::new(),
             head_ref,
             chain: BlockChain::new(),
             unpersisted_block_count: 0,
-        };
-
-        if let Err(err) = chain_store.refresh_chains() {
-            return Err(err);
-        }
-
-        Ok(chain_store)
+        })
     }
 
     pub fn head_path(&self, head_ref: &HeadRef) -> PathBuf {
@@ -249,9 +173,7 @@ impl<T: BlockData> FsChainStore<T> {
         head_path
     }
 
-    pub fn load_next_parent_chain<'a>(
-        &'a mut self,
-    ) -> Result<Option<&'a Block<T>>, ChainStoreError> {
+    pub fn load_next_parent_chain<'a>(&'a mut self) -> Result<Option<&'a Block<T>>> {
         let hash = {
             if let Some(root_most_block) = self.chain.blocks.front() {
                 root_most_block.payload.parent.clone()
@@ -261,7 +183,7 @@ impl<T: BlockData> FsChainStore<T> {
                 if !head_path.exists() {
                     return Ok(None);
                 }
-                resolve_ref(&head_path)?
+                resolve_fs_ref(&head_path)?
             }
         };
 
@@ -275,8 +197,9 @@ impl<T: BlockData> FsChainStore<T> {
         path.push(&hash_str.str()[0..2]);
         path.push(&hash_str.str()[2..64]);
 
-        let file = fs::File::open(path.clone())
-            .map_err(|err| (err, path, "attempting to load the next chain"))?;
+        let file = fs::File::open(path.clone()).with_context(|| {
+            format!("attempted to load the next chain {}", path.display())
+        })?;
 
         let reader = BufReader::new(file);
 
@@ -286,7 +209,7 @@ impl<T: BlockData> FsChainStore<T> {
 
         let mut blocks =
             serde_json::from_reader::<BufReader<fs::File>, Vec<Block<T>>>(reader)
-                .map_err(|err| (err, ""))?;
+                .context("failed to deserialize block")?;
 
         for block in blocks.drain(..).rev() {
             self.chain.blocks.push_front(block);
@@ -295,7 +218,7 @@ impl<T: BlockData> FsChainStore<T> {
         Ok(self.chain.blocks.front())
     }
 
-    pub fn load_all_chains(&mut self) -> Result<(), ChainStoreError> {
+    pub fn load_all_chains(&mut self) -> Result<()> {
         loop {
             let chain = self.load_next_parent_chain()?;
             if chain.is_none() {
@@ -307,13 +230,13 @@ impl<T: BlockData> FsChainStore<T> {
 }
 
 impl<T: BlockData> ChainStore<T> for FsChainStore<T> {
-    fn refresh_chains(&mut self) -> Result<(), ChainStoreError> {
+    fn get_known_hashes(&mut self) -> Result<HashSet<Hash>> {
+        let mut chain_hashes = HashSet::<Hash>::new();
         let dir_entries = fs::read_dir(self.chains_path.clone());
         if dir_entries.is_err() {
-            return Err(ChainStoreError::CouldNotReadDirectory);
+            bail!("could not read directory {}", self.chains_path.display());
         }
 
-        self.chain_hashes.clear();
         let mut path_str = String::new();
         for dir_entry in dir_entries.unwrap() {
             if dir_entry.is_err() {
@@ -323,7 +246,7 @@ impl<T: BlockData> ChainStore<T> for FsChainStore<T> {
 
             let postfix_dir_entries = fs::read_dir(dir_entry.path());
             if postfix_dir_entries.is_err() {
-                return Err(ChainStoreError::CouldNotReadDirectory);
+                bail!("could not read directory {}", dir_entry.path().display());
             }
             let prefix_file_name = dir_entry.file_name();
             let prefix_path_str: &str = &prefix_file_name.to_string_lossy();
@@ -337,24 +260,24 @@ impl<T: BlockData> ChainStore<T> for FsChainStore<T> {
                 path_str.push_str(&postfix_dir_entry.file_name().to_string_lossy());
 
                 if let Ok(hash) = Hash::try_from(path_str.as_str()) {
-                    self.chain_hashes.insert(hash);
+                    chain_hashes.insert(hash);
                 } else {
                     eprintln!("Could not read chain {:?}", dir_entry);
                 }
             }
         }
 
-        Ok(())
+        Ok(chain_hashes)
     }
 
-    fn persist(&mut self) -> Result<(), ChainStoreError> {
+    fn persist(&mut self) -> Result<()> {
         let tip = self.chain.tip();
         if tip.is_none() {
             // There is nothing to persist.
             return Ok(());
         }
         let tip = tip.unwrap();
-        let mut tip_string = StackStringHash::from(&tip.hash);
+        let tip_string = StackStringHash::from(&tip.hash);
 
         let mut target_path = self.chains_path.clone();
 
@@ -373,9 +296,12 @@ impl<T: BlockData> ChainStore<T> for FsChainStore<T> {
         // Ensure the prefix folder exists.
         if !target_path.as_path().is_dir() {
             // Make the directory.
-            if fs::create_dir(target_path.clone()).is_err() {
-                return Err(ChainStoreError::FailedToCreateDirectory);
-            }
+            fs::create_dir(target_path.clone()).with_context(|| {
+                format!(
+                    "failed to create the hash prefix directory {}",
+                    target_path.display()
+                )
+            })?;
         }
 
         // Add the chain file name, e.g "23456789abcdefff...f" in th example above.
@@ -412,8 +338,9 @@ impl<T: BlockData> ChainStore<T> for FsChainStore<T> {
         }
 
         // Create the target file.
-        let target_file = fs::File::create(target_path.clone())
-            .map_err(|err| (err, target_path, "attempting to load the next chain"))?;
+        let target_file = fs::File::create(target_path.clone()).with_context(|| {
+            format!("attempted to load the next chain {}", target_path.display())
+        })?;
 
         // Build a list of the blocks from the VecDeque.
         let mut blocks: Vec<&Block<T>> = Vec::new();
@@ -427,22 +354,42 @@ impl<T: BlockData> ChainStore<T> for FsChainStore<T> {
         }
 
         // Write out the chain as JSON.
-        if let Err(_) = serde_json::to_writer_pretty(target_file, &blocks) {
-            return Err(ChainStoreError::FailedToSerializeToFile);
-        };
+        serde_json::to_writer_pretty(target_file, &blocks).with_context(|| {
+            format!("failed to write blocks to file {}", target_path.display())
+        })?;
 
-        if let Err(_) =
-            fs::write(self.head_path(&self.head_ref), String::from(&(tip.hash)))
-        {
-            return Err(ChainStoreError::FailedToWriteFile);
-        }
+        fs::write(self.head_path(&self.head_ref), String::from(&(tip.hash)))
+            .with_context(|| {
+                format!(
+                    "failed to write head reference {}",
+                    self.head_path(&self.head_ref).display()
+                )
+            })?;
 
         self.unpersisted_block_count = 0;
         Ok(())
     }
 
-    fn iter(&self) -> Box<dyn DoubleEndedIterator<Item = &Block<T>> + '_> {
+    fn iter_loaded(&self) -> Box<dyn DoubleEndedIterator<Item = &Block<T>> + '_> {
         Box::new(self.chain.blocks.iter())
+    }
+
+    fn iter_all(
+        &mut self,
+    ) -> Result<Box<dyn DoubleEndedIterator<Item = &Block<T>> + '_>> {
+        if self.chain.is_partial() {
+            self.load_all_chains()?;
+        }
+        if self.chain.is_partial() && !self.chain.blocks.is_empty() {
+            bail!(
+                "The chain is incomplete, the first block is {:?}",
+                self.chain
+                    .blocks
+                    .front()
+                    .expect("Logic error, unable to get front block.")
+            );
+        }
+        Ok(Box::new(self.chain.blocks.iter()))
     }
 
     fn add(&mut self, data: T) -> &Block<T> {
@@ -560,7 +507,7 @@ impl<T: BlockData> ChainStore<T> for FsChainStore<T> {
 impl<T: BlockData> From<&FsChainStore<T>> for BlockChain<T> {
     fn from(store: &FsChainStore<T>) -> Self {
         let mut blocks: Vec<Block<T>> = Vec::new();
-        for block in store.iter() {
+        for block in store.iter_loaded() {
             blocks.push(block.clone())
         }
         BlockChain::from(blocks)
@@ -570,29 +517,35 @@ impl<T: BlockData> From<&FsChainStore<T>> for BlockChain<T> {
 impl<T: BlockData> From<&mut FsChainStore<T>> for BlockChain<T> {
     fn from(store: &mut FsChainStore<T>) -> Self {
         let mut blocks: Vec<Block<T>> = Vec::new();
-        for block in store.iter() {
+        for block in store.iter_loaded() {
             blocks.push(block.clone())
         }
         BlockChain::from(blocks)
     }
 }
 
-fn resolve_ref(path: &PathBuf) -> Result<Hash, ChainStoreError> {
+#[derive(Error, Debug)]
+pub enum ResolveRefError {
+    #[error("the hash ref is invalid")]
+    InvalidRefHash,
+    #[error("failed to read ref")]
+    FailedToReadRef,
+}
+
+fn resolve_fs_ref(path: &PathBuf) -> Result<Hash, ResolveRefError> {
     match fs::read_to_string(path) {
         Ok(contents) => match Hash::try_from(contents.as_str()) {
             Ok(hash) => Ok(hash),
-            Err(_) => Err(ChainStoreError::InvalidRefHash),
+            Err(_) => Err(ResolveRefError::InvalidRefHash),
         },
-        Err(_) => Err(ChainStoreError::FailedToReadRef),
+        Err(_) => Err(ResolveRefError::FailedToReadRef),
     }
 }
 
 #[cfg(test)]
 mod test {
-    use std::mem::discriminant;
-
     use crate::{
-        utils::{tree, tree_lines, TimeStampScope},
+        utils::{tree_lines, TimeStampScope},
         Action,
     };
 
@@ -609,18 +562,6 @@ mod test {
 
     fn subpath_exists(path: &PathBuf, folder: &str) -> bool {
         subpath(path, folder).exists()
-    }
-
-    fn touch(path: &PathBuf) {
-        fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .open(path.clone())
-            .expect("Failed to touch path.");
-    }
-
-    fn hash(str: &str) -> Hash {
-        str.try_into().expect("Failed to create hash for test.")
     }
 
     #[test]
@@ -655,12 +596,7 @@ mod test {
         path.push("not-here");
         path.push(".garden");
         let head_ref = HeadRef::try_from("my-garden").unwrap();
-        assert_eq!(
-            discriminant(
-                &FsChainStore::<Action>::try_new(path.clone(), head_ref).unwrap_err()
-            ),
-            discriminant(&ChainStoreError::RootPathNotValid)
-        );
+        assert!(FsChainStore::<Action>::try_new(path.clone(), head_ref).is_err());
     }
 
     fn ls(path: &PathBuf) -> Vec<String> {
@@ -697,8 +633,11 @@ mod test {
         "8243497f48f2fbb2677646456d4d3f123250a95c838082bfc97716b775b5ff";
     const HASH_4_FILE_NAME: &str =
         "22da39a7e34043683136eb3048b7ac1f3c68778875b17ffc01d8809632bb9c";
+
+    #[allow(unused)]
     const HASH_1_SUBFOLDER: &str = "0a";
     const HASH_2_SUBFOLDER: &str = "dc";
+    #[allow(unused)]
     const HASH_3_SUBFOLDER: &str = "fb";
     const HASH_4_SUBFOLDER: &str = "d7";
 
@@ -707,7 +646,7 @@ mod test {
         pub tmp_dir: TempDir,
         pub path: PathBuf,
         pub chain_store: FsChainStore<String>,
-        pub chain: BlockChain<String>,
+        #[allow(unused)] // Side effect.
         pub timestamp: TimeStampScope,
     }
 
@@ -720,13 +659,11 @@ mod test {
                 HeadRef::try_from("my-garden").expect("Failed to create HeadRef");
             let chain_store = FsChainStore::<String>::try_new(path.clone(), head_ref)
                 .expect("Failed to create ChainStore");
-            let chain = BlockChain::<String>::new();
 
             Self {
                 tmp_dir,
                 path,
                 chain_store,
-                chain,
                 timestamp: TimeStampScope::new(),
             }
         }
@@ -751,7 +688,6 @@ mod test {
         let mut test = ChainStoreTest::new();
         let ChainStoreTest {
             ref mut chain_store,
-            ref mut chain,
             ref path,
             ..
         } = test;
@@ -784,8 +720,6 @@ mod test {
         let mut test = ChainStoreTest::new();
         let ChainStoreTest {
             ref mut chain_store,
-            ref mut chain,
-            ref path,
             ..
         } = test;
 
@@ -817,8 +751,6 @@ mod test {
         let mut test = ChainStoreTest::new();
         let ChainStoreTest {
             ref mut chain_store,
-            ref mut chain,
-            ref path,
             ..
         } = test;
 
@@ -856,7 +788,6 @@ mod test {
         let mut test = ChainStoreTest::new();
         let ChainStoreTest {
             ref mut chain_store,
-            ref mut chain,
             ref path,
             ..
         } = test;
@@ -900,7 +831,6 @@ mod test {
         let mut test = ChainStoreTest::new();
         let ChainStoreTest {
             ref mut chain_store,
-            ref mut chain,
             ref path,
             ..
         } = test;
@@ -947,7 +877,6 @@ mod test {
         let mut test = ChainStoreTest::new();
         let ChainStoreTest {
             ref mut chain_store,
-            ref mut chain,
             ref path,
             ..
         } = test;
@@ -963,18 +892,17 @@ mod test {
             FsChainStore::<String>::try_new(path.clone(), chain_store.head_ref.clone())
                 .expect("Failed to create ChainStore");
 
-        new_chain_store
-            .load_all_chains()
-            .expect("Failed to load all chains.");
+        assert_eq!(new_chain_store.chain.blocks.len(), 0);
+        {
+            let data: Vec<&str> = new_chain_store
+                .iter_all()
+                .expect("Failed to load all chains.")
+                .map(|block| block.payload.data.as_str())
+                .collect();
 
+            assert_eq!(data, vec!["data 1", "data 2", "data 3", "data 4"]);
+        }
         assert_eq!(new_chain_store.chain.blocks.len(), 4);
-
-        let data: Vec<&str> = new_chain_store
-            .iter()
-            .map(|block| block.payload.data.as_str())
-            .collect();
-
-        assert_eq!(data, vec!["data 1", "data 2", "data 3", "data 4"]);
 
         assert_eq!(
             BlockChain::from(chain_store),
@@ -986,7 +914,6 @@ mod test {
         let mut test = ChainStoreTest::new();
         let ChainStoreTest {
             ref mut chain_store,
-            ref mut chain,
             ref path,
             ..
         } = test;
@@ -1014,7 +941,7 @@ mod test {
         let chain_store = get_store_for_iterator_tests();
 
         let data: Vec<&str> = chain_store
-            .iter()
+            .iter_loaded()
             .map(|block| block.payload.data.as_str())
             .collect();
 

@@ -1,47 +1,49 @@
 use std::rc::Rc;
 
-use crate::{
-    block_chain::{Block, BlockChain},
-    chain_store::HeadRef,
-    garden::GardenPlot,
-    reducers, Action, ChainStore, Hash,
-};
+use anyhow::{bail, Result};
+
+use crate::{garden::GardenPlot, reducers, Action, ChainStore, Hash};
 
 #[derive(Debug)]
 pub struct StateStore {
-    pub chain_store: Box<dyn ChainStore<Action>>,
+    pub chains: Box<dyn ChainStore<Action>>,
     pub state: State,
 }
 
 impl StateStore {
-    pub fn new(chain_store: Box<dyn ChainStore<Action>>) -> Self {
+    pub fn try_new(chain_store: Box<dyn ChainStore<Action>>) -> Result<Self> {
         let mut store = Self {
-            chain_store,
+            chains: chain_store,
             state: State::new(),
         };
 
-        store
-            .load_untrusted_chain_store()
-            .expect("The block chain failed to reduce");
+        store.load_untrusted_chain_store()?;
 
-        store
+        Ok(store)
     }
 
-    pub fn create_garden_plot(&mut self, name: String) -> (Hash, GardenPlot) {
-        let plot = GardenPlot::new(name);
-        let block = self.chain_store.add(Action::CreatePlot(plot.clone()));
-        (block.hash.clone(), plot)
+    pub fn dispatch(&mut self, action: Action) {
+        self.state = self.state.reduce(&action);
+        self.chains.add(action);
     }
 
-    pub fn load_untrusted_chain_store(&mut self) -> Result<(), ()> {
+    pub fn load_untrusted_chain_store(&mut self) -> Result<()> {
         let mut prev_hash = Hash::empty();
 
-        for block in self.chain_store.iter().rev() {
-            if prev_hash != block.hash {
-                return Err(());
+        for block in self.chains.iter_all()? {
+            if prev_hash != block.payload.parent {
+                bail!(
+                    "A block did not match the previous hash.\nPrevious: {:#?},\n{:#?}",
+                    prev_hash,
+                    block
+                )
             }
             if block.payload.hash() != block.hash {
-                return Err(());
+                bail!(
+                    "A block's hash did not match.\nComputed: {:#?}\nBlock:{:#?}",
+                    block.payload.hash(),
+                    block
+                )
             }
             prev_hash = block.hash.clone();
 
@@ -52,7 +54,7 @@ impl StateStore {
     }
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Debug)]
 pub struct State {
     my_garden: Option<Rc<GardenPlot>>,
 }
@@ -72,7 +74,10 @@ impl State {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::chain_store::FsChainStore;
+    use crate::{
+        actions,
+        chain_store::{FsChainStore, HeadRef},
+    };
     use std::path::PathBuf;
     use tempdir::TempDir;
 
@@ -80,7 +85,7 @@ mod test {
         #[allow(dead_code)] // RAII
         pub tmp_dir: TempDir,
         pub path: PathBuf,
-        pub state_store: StateStore,
+        pub store: StateStore,
     }
 
     impl StateStoreTest {
@@ -94,12 +99,13 @@ mod test {
                 FsChainStore::<Action>::try_new(path.clone(), head_ref)
                     .expect("Failed to create ChainStore"),
             );
-            let state_store = StateStore::new(chain_store);
+            let store =
+                StateStore::try_new(chain_store).expect("Failed to create StateStore");
 
             Self {
                 tmp_dir,
                 path,
-                state_store,
+                store,
             }
         }
     }
@@ -108,10 +114,26 @@ mod test {
     fn test_garden() {
         let mut test = StateStoreTest::new();
         let StateStoreTest {
-            ref mut state_store,
+            ref mut store,
             ref path,
             ..
         } = test;
-        println!("{:#?}", state_store);
+        store.dispatch(actions::create_garden_plot("The Secret Garden".into()));
+        store
+            .chains
+            .persist()
+            .expect("Failed to persist chain store");
+
+        let chains = Box::new(
+            FsChainStore::<Action>::try_new(
+                path.clone(),
+                store.chains.head_ref().clone(),
+            )
+            .expect("Failed to create ChainStore"),
+        );
+
+        let store2 = StateStore::try_new(chains).expect("Failed to create StateStore.");
+
+        assert_eq!(store.state, store2.state);
     }
 }

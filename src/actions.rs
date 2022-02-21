@@ -14,3 +14,7 @@ impl SerializedBytes for Action {
         Cow::from(bincode::serialize(self).expect("Unable to serialize Action."))
     }
 }
+
+pub fn create_garden_plot(name: String) -> Action {
+    Action::CreatePlot(GardenPlot::new(name))
+}
