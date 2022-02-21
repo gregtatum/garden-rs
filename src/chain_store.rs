@@ -81,8 +81,12 @@ impl<T: BlockData> std::fmt::Debug for dyn ChainStore<T> {
 /// .
 /// └── .garden
 ///     ├── chains
-///     │   ├── 0123456789abcdef0123456789abcdef
-///     │   └── 0123456789abcdef0123456789abcdef
+///     │   ├── 01
+///     │   │   ├── 23456789abcdef0123456789abcdef0123456789abcdef0123456789000001
+///     │   │   └── 23456789abcdef0123456789abcdef0123456789abcdef0123456789000002
+///     │   └── ab
+///     │   │   ├── cdef0123456789abcdef0123456789abcdef0123456789abcdef0000000001
+///     │   │   └── cdef0123456789abcdef0123456789abcdef0123456789abcdef0000000002
 ///     └── heads
 ///     │   ├── garden-1
 ///     │   └── garden-2
