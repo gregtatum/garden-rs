@@ -110,8 +110,10 @@ pub struct FsChainStore<T: BlockData> {
     /// This block must be serialized in the .garden/chains folder.
     pub head_ref: HeadRef,
 
-    // chain[block(4), block(5), block(6)], chain[block(1), block(2), block(3)]
-    pub chains: Vec<BlockChain<T>>,
+    pub chain: BlockChain<T>,
+
+    /// The number of blocks that need to be persisted.
+    unpersisted_block_count: usize,
 }
 
 #[derive(Display, Debug)]
@@ -227,7 +229,8 @@ impl<T: BlockData> FsChainStore<T> {
             heads_path,
             chain_hashes: HashSet::new(),
             head_ref,
-            chains: Vec::new(),
+            chain: BlockChain::new(),
+            unpersisted_block_count: 0,
         };
 
         if let Err(err) = chain_store.refresh_chains() {
@@ -243,16 +246,12 @@ impl<T: BlockData> FsChainStore<T> {
         head_path
     }
 
-    pub fn load_next_chain<'a>(
+    pub fn load_next_parent_chain<'a>(
         &'a mut self,
-    ) -> Result<Option<&'a BlockChain<T>>, ChainStoreError> {
+    ) -> Result<Option<&'a Block<T>>, ChainStoreError> {
         let hash = {
-            if let Some(last_chain) = self.chains.last() {
-                let last_block = last_chain.blocks.first();
-                if last_block.is_none() {
-                    return Ok(None);
-                }
-                last_block.unwrap().payload.parent.clone()
+            if let Some(root_most_block) = self.chain.blocks.front() {
+                root_most_block.payload.parent.clone()
             } else {
                 let mut head_path = self.heads_path.clone();
                 head_path.push(self.head_ref.str());
@@ -277,44 +276,30 @@ impl<T: BlockData> FsChainStore<T> {
             .map_err(|err| (err, path, "attempting to load the next chain"))?;
 
         let reader = BufReader::new(file);
-        self.chains.push(BlockChain::from(
-            serde_json::from_reader::<BufReader<fs::File>, Vec<Block<T>>>(reader)
-                .map_err(|err| (err, ""))?,
-        ));
 
-        Ok(self.chains.last())
+        //                     [block(5), block(6), block(7)]
+        // [block(3), block(4)]                             └── Existing block chain
+        //                    └── .json file to load
+
+        let mut blocks =
+            serde_json::from_reader::<BufReader<fs::File>, Vec<Block<T>>>(reader)
+                .map_err(|err| (err, ""))?;
+
+        for block in blocks.drain(..).rev() {
+            self.chain.blocks.push_front(block);
+        }
+
+        Ok(self.chain.blocks.front())
     }
 
     pub fn load_all_chains(&mut self) -> Result<(), ChainStoreError> {
         loop {
-            let chain = self.load_next_chain()?;
+            let chain = self.load_next_parent_chain()?;
             if chain.is_none() {
                 break;
             }
         }
-
-        // Add on an empty chain to the tip, so that anything new added will not have
-        // been serialized already.
-        self.add_empty_chain();
         return Ok(());
-    }
-
-    fn add_empty_chain(&mut self) {
-        let parent = if let Some(chain) = self.chains.last() {
-            if let Some(block) = chain.blocks.last() {
-                Some(block.hash.clone())
-            } else {
-                // There already is an empty chain here, do nothing
-                None
-            }
-        } else {
-            // No chains yet.
-            Some(Hash::empty())
-        };
-
-        if let Some(parent) = parent {
-            self.chains.push(BlockChain::new_parented(parent))
-        }
     }
 }
 
@@ -360,104 +345,110 @@ impl<T: BlockData> ChainStore<T> for FsChainStore<T> {
     }
 
     fn persist(&mut self) -> Result<(), ChainStoreError> {
-        for chain in self.chains.iter().rev() {
-            let tip = chain.tip();
-            if tip.is_none() {
-                continue;
-            }
-            let tip = tip.unwrap();
+        let tip = self.chain.tip();
+        if tip.is_none() {
+            // There is nothing to persist.
+            return Ok(());
+        }
+        let tip = tip.unwrap();
+        let mut tip_string = StackStringHash::from(&tip.hash);
 
-            let mut tip_string = StackStringHash::from(&tip.hash);
+        let mut target_path = self.chains_path.clone();
 
-            let mut target_path = self.chains_path.clone();
+        // Use the same optimization as git and store the chains in multiple
+        // sub-folders.
+        //
+        // 0123456789abcdefffffffffffffffffffffffffffffffffffffffffffffffff
+        //   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        //   └── chain file
+        // ^^
+        // └── prefix
 
-            // Use the same optimization as git and store the chains in multiple
-            // sub-folders.
-            //
-            // 0123456789abcdefffffffffffffffffffffffffffffffffffffffffffffffff
-            //   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-            //   └── chain file
-            // ^^
-            // └── prefix
+        // Add the prefix, e.g "01" in th example above.
+        target_path.push(&tip_string.str()[0..2]);
 
-            // Add the prefix, e.g "01" in th example above.
-            target_path.push(&tip_string.str()[0..2]);
-
-            // Ensure the prefix folder exists.
-            if !target_path.as_path().is_dir() {
-                // Make the directory.
-                if fs::create_dir(target_path.clone()).is_err() {
-                    return Err(ChainStoreError::FailedToCreateDirectory);
-                }
-            }
-
-            // Add the chain file name, e.g "23456789abcdefff...f" in th example above.
-            target_path.push(&tip_string.str()[2..64]);
-
-            if target_path.as_path().exists() {
-                // This block has already been serialized, we are done.
-                break;
-            }
-
-            // Look for a root that has been serialized.
-            let mut root_index = 0;
-            {
-                let mut root_path = self.chains_path.clone();
-                let mut root_hash_string = StackStringHash::from(&tip.hash);
-
-                for (i, block) in chain.blocks.iter().enumerate().rev() {
-                    let parent = &block.payload.parent;
-                    root_index = i;
-                    if parent.is_root() {
-                        // At a root hash, serialize the entire chain.
-                        break;
-                    }
-                    let hash_str = root_hash_string.set(&parent);
-                    root_path.push(&hash_str[0..2]);
-                    root_path.push(&hash_str[2..64]);
-                    if root_path.exists() {
-                        break;
-                    }
-                    root_path.pop();
-                    root_path.pop();
-                }
-            }
-
-            // Create the target file.
-            let target_file = fs::File::create(target_path.clone())
-                .map_err(|err| (err, target_path, "attempting to load the next chain"))?;
-
-            // Write out the chain as JSON.
-            if let Err(_) =
-                serde_json::to_writer_pretty(target_file, &chain.blocks[root_index..])
-            {
-                return Err(ChainStoreError::FailedToSerializeToFile);
-            };
-
-            if let Err(_) =
-                fs::write(self.head_path(&self.head_ref), String::from(&(tip.hash)))
-            {
-                return Err(ChainStoreError::FailedToWriteFile);
+        // Ensure the prefix folder exists.
+        if !target_path.as_path().is_dir() {
+            // Make the directory.
+            if fs::create_dir(target_path.clone()).is_err() {
+                return Err(ChainStoreError::FailedToCreateDirectory);
             }
         }
 
-        // After persisting, start growing on a new blockchain.
-        self.add_empty_chain();
+        // Add the chain file name, e.g "23456789abcdefff...f" in th example above.
+        target_path.push(&tip_string.str()[2..64]);
 
+        if target_path.as_path().exists() {
+            // This block has already been serialized, we are done.
+            self.unpersisted_block_count = 0;
+            return Ok(());
+        }
+
+        // Look for a root that has been serialized.
+        let mut root_index = 0;
+        {
+            let mut root_path = self.chains_path.clone();
+            let mut root_hash_string = StackStringHash::from(&tip.hash);
+
+            for (i, block) in self.chain.blocks.iter().enumerate().rev() {
+                let parent = &block.payload.parent;
+                root_index = i;
+                if parent.is_root() {
+                    // At a root hash, serialize the entire chain.
+                    break;
+                }
+                let hash_str = root_hash_string.set(&parent);
+                root_path.push(&hash_str[0..2]);
+                root_path.push(&hash_str[2..64]);
+                if root_path.exists() {
+                    break;
+                }
+                root_path.pop();
+                root_path.pop();
+            }
+        }
+
+        // Create the target file.
+        let target_file = fs::File::create(target_path.clone())
+            .map_err(|err| (err, target_path, "attempting to load the next chain"))?;
+
+        // Build a list of the blocks from the VecDeque.
+        let mut blocks: Vec<&Block<T>> = Vec::new();
+        for i in root_index..self.chain.blocks.len() {
+            blocks.push(
+                self.chain
+                    .blocks
+                    .get(i)
+                    .expect("Logic error, couldn't get block"),
+            );
+        }
+
+        // Write out the chain as JSON.
+        if let Err(_) = serde_json::to_writer_pretty(target_file, &blocks) {
+            return Err(ChainStoreError::FailedToSerializeToFile);
+        };
+
+        if let Err(_) =
+            fs::write(self.head_path(&self.head_ref), String::from(&(tip.hash)))
+        {
+            return Err(ChainStoreError::FailedToWriteFile);
+        }
+
+        self.unpersisted_block_count = 0;
         Ok(())
     }
 
     fn iter(&self) -> Box<dyn DoubleEndedIterator<Item = &Block<T>> + '_> {
-        Box::new(FsBlockIterator::new(self))
+        Box::new(self.chain.blocks.iter())
     }
 
     fn add(&mut self, data: T) -> &Block<T> {
-        if self.chains.is_empty() {
-            self.chains.push(BlockChain::new_rooted());
-        }
-
-        let mut chain = self.chains.last_mut().expect("Failed to load last chain.");
-        chain.add_data(data)
+        self.chain.add_data(data);
+        self.unpersisted_block_count += 1;
+        self.chain
+            .blocks
+            .back()
+            .expect("Logic error, failed to get the back block.")
     }
 
     fn head_ref(&self) -> &HeadRef {
@@ -465,101 +456,101 @@ impl<T: BlockData> ChainStore<T> for FsChainStore<T> {
     }
 }
 
-#[derive(Debug)]
-struct FsBlockIterator<'a, T: BlockData + 'a> {
-    next_chain_index: usize,
-    next_block_index: usize,
-    back_chain_index: usize,
-    back_block_index: usize,
-    fs_chain_store: &'a FsChainStore<T>,
-}
+// #[derive(Debug)]
+// struct FsBlockIterator<'a, T: BlockData + 'a> {
+//     next_chain_index: usize,
+//     next_block_index: usize,
+//     back_chain_index: usize,
+//     back_block_index: usize,
+//     fs_chain_store: &'a FsChainStore<T>,
+// }
 
-impl<'a, T: BlockData> FsBlockIterator<'a, T> {
-    fn new(fs_chain_store: &'a FsChainStore<T>) -> FsBlockIterator<'a, T> {
-        Self {
-            next_chain_index: 0,
-            next_block_index: 0,
-            back_chain_index: 0,
-            back_block_index: 0,
-            fs_chain_store,
-        }
-    }
-}
+// impl<'a, T: BlockData> FsBlockIterator<'a, T> {
+//     fn new(fs_chain_store: &'a FsChainStore<T>) -> FsBlockIterator<'a, T> {
+//         Self {
+//             next_chain_index: 0,
+//             next_block_index: 0,
+//             back_chain_index: 0,
+//             back_block_index: 0,
+//             fs_chain_store,
+//         }
+//     }
+// }
 
-impl<'a, T: BlockData> Iterator for FsBlockIterator<'a, T> {
-    type Item = &'a Block<T>;
+// impl<'a, T: BlockData> Iterator for FsBlockIterator<'a, T> {
+//     type Item = &'a Block<T>;
 
-    fn next(&mut self) -> Option<Self::Item> {
-        if (self.next_chain_index > 1 && self.back_chain_index > 1)
-            || (self.next_block_index > 1 && self.back_block_index > 1)
-        {
-            panic!("TODO - This iterator doesn't support both forward and reverse iteration at the same time. {:#?}", self);
-        }
-        // chain[block(4), block(5), block(6)], chain[block(1), block(2), block(3)]
-        // └─ Start here -->
-        if let Some(BlockChain { ref blocks, .. }) =
-            self.fs_chain_store.chains.get(self.next_chain_index)
-        {
-            if blocks.is_empty() {
-                return None;
-            }
-            // chain[block(4), block(5), block(6)]
-            //                      <--- └─ Start here
-            let last_block_index = blocks.len() - 1;
-            if let Some(block) = blocks.get(last_block_index - self.next_block_index) {
-                self.next_block_index += 1;
+//     fn next(&mut self) -> Option<Self::Item> {
+//         if (self.next_chain_index > 1 && self.back_chain_index > 1)
+//             || (self.next_block_index > 1 && self.back_block_index > 1)
+//         {
+//             panic!("TODO - This iterator doesn't support both forward and reverse iteration at the same time. {:#?}", self);
+//         }
+//         // chain[block(4), block(5), block(6)], chain[block(1), block(2), block(3)]
+//         // └─ Start here -->
+//         if let Some(BlockChain { ref blocks, .. }) =
+//             self.fs_chain_store.chain.get(self.next_chain_index)
+//         {
+//             if blocks.is_empty() {
+//                 return None;
+//             }
+//             // chain[block(4), block(5), block(6)]
+//             //                      <--- └─ Start here
+//             let last_block_index = blocks.len() - 1;
+//             if let Some(block) = blocks.get(last_block_index - self.next_block_index) {
+//                 self.next_block_index += 1;
 
-                if self.next_block_index == blocks.len() {
-                    // We got to the end of the blocks in the chain, go to the next chain.
-                    self.next_chain_index += 1;
-                    self.next_block_index = 0;
-                }
-                return Some(block);
-            }
-        };
+//                 if self.next_block_index == blocks.len() {
+//                     // We got to the end of the blocks in the chain, go to the next chain.
+//                     self.next_chain_index += 1;
+//                     self.next_block_index = 0;
+//                 }
+//                 return Some(block);
+//             }
+//         };
 
-        None
-    }
-}
+//         None
+//     }
+// }
 
-impl<'a, T: BlockData> DoubleEndedIterator for FsBlockIterator<'a, T> {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        if (self.next_chain_index > 0 && self.back_chain_index > 0)
-            || (self.next_block_index > 0 && self.back_block_index > 0)
-        {
-            panic!("TODO - This iterator doesn't support both forward and reverse iteration at the same time. {:#?}", self);
-        }
-        // chain[block(4), block(5), block(6)], chain[block(1), block(2), block(3)]
-        //                                 <--  └─ Start here
-        let last_chain_index = self.fs_chain_store.chains.len() - 1;
-        if self.back_chain_index > last_chain_index {
-            return None;
-        }
-        if let Some(BlockChain { ref blocks, .. }) = self
-            .fs_chain_store
-            .chains
-            .get(last_chain_index - self.back_chain_index)
-        {
-            if blocks.is_empty() {
-                return None;
-            }
-            // chain[block(4), block(5), block(6)]
-            //       └─ Start here ->
-            if let Some(block) = blocks.get(self.back_block_index) {
-                self.back_block_index += 1;
+// impl<'a, T: BlockData> DoubleEndedIterator for FsBlockIterator<'a, T> {
+//     fn next_back(&mut self) -> Option<Self::Item> {
+//         if (self.next_chain_index > 0 && self.back_chain_index > 0)
+//             || (self.next_block_index > 0 && self.back_block_index > 0)
+//         {
+//             panic!("TODO - This iterator doesn't support both forward and reverse iteration at the same time. {:#?}", self);
+//         }
+//         // chain[block(4), block(5), block(6)], chain[block(1), block(2), block(3)]
+//         //                                 <--  └─ Start here
+//         let last_chain_index = self.fs_chain_store.chain.len() - 1;
+//         if self.back_chain_index > last_chain_index {
+//             return None;
+//         }
+//         if let Some(BlockChain { ref blocks, .. }) = self
+//             .fs_chain_store
+//             .chain
+//             .get(last_chain_index - self.back_chain_index)
+//         {
+//             if blocks.is_empty() {
+//                 return None;
+//             }
+//             // chain[block(4), block(5), block(6)]
+//             //       └─ Start here ->
+//             if let Some(block) = blocks.get(self.back_block_index) {
+//                 self.back_block_index += 1;
 
-                if self.back_block_index == blocks.len() {
-                    // We got to the end of the blocks in the chain, go to the next chain.
-                    self.back_chain_index += 1;
-                    self.back_block_index = 0;
-                }
-                return Some(block);
-            }
-        };
+//                 if self.back_block_index == blocks.len() {
+//                     // We got to the end of the blocks in the chain, go to the next chain.
+//                     self.back_chain_index += 1;
+//                     self.back_block_index = 0;
+//                 }
+//                 return Some(block);
+//             }
+//         };
 
-        None
-    }
-}
+//         None
+//     }
+// }
 
 /// Expensively consolidates the blocks in the chain store into a single blockchain.
 /// This involves a full copy
@@ -726,7 +717,7 @@ mod test {
                 HeadRef::try_from("my-garden").expect("Failed to create HeadRef");
             let chain_store = FsChainStore::<String>::try_new(path.clone(), head_ref)
                 .expect("Failed to create ChainStore");
-            let chain = BlockChain::<String>::new_rooted();
+            let chain = BlockChain::<String>::new();
 
             Self {
                 tmp_dir,
@@ -741,7 +732,7 @@ mod test {
     #[test]
     fn test_chainstore_hashes() {
         // Test that the hashes are all the same as expected.
-        let mut chain = BlockChain::<String>::new_rooted();
+        let mut chain = BlockChain::<String>::new();
         chain.add_data("data 1".into());
         assert_eq!(&String::from(&chain.tip().unwrap().hash), HASH_1);
         chain.add_data("data 2".into());
@@ -973,14 +964,14 @@ mod test {
             .load_all_chains()
             .expect("Failed to load all chains.");
 
-        assert_eq!(new_chain_store.chains.len(), 3);
+        assert_eq!(new_chain_store.chain.blocks.len(), 4);
 
         let data: Vec<&str> = new_chain_store
             .iter()
             .map(|block| block.payload.data.as_str())
             .collect();
 
-        assert_eq!(data, vec!["data 4", "data 3", "data 2", "data 1"]);
+        assert_eq!(data, vec!["data 1", "data 2", "data 3", "data 4"]);
 
         assert_eq!(
             BlockChain::from(chain_store),
@@ -1016,32 +1007,14 @@ mod test {
     }
 
     #[test]
-    fn test_iter_rev() {
+    fn test_iter() {
         let chain_store = get_store_for_iterator_tests();
 
         let data: Vec<&str> = chain_store
             .iter()
-            .rev()
             .map(|block| block.payload.data.as_str())
             .collect();
 
         assert_eq!(data, vec!["data 1", "data 2", "data 3", "data 4"]);
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_iter_rev_panic() {
-        // The iterators should return None when the chain and block index would match.
-        let chain_store = get_store_for_iterator_tests();
-
-        let mut iter = chain_store.iter();
-
-        assert_eq!(iter.next().unwrap().payload.data, "data 4");
-        assert_eq!(iter.next().unwrap().payload.data, "data 3");
-        assert_eq!(iter.next_back().unwrap().payload.data, "data 1");
-        assert_eq!(iter.next_back().unwrap().payload.data, "data 2");
-        // This panics:
-        assert_eq!(iter.next_back(), None);
-        assert_eq!(iter.next(), None);
     }
 }

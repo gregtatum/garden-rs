@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::VecDeque};
 
 use crate::{hash::Hash, utils::get_timestamp};
 
@@ -60,32 +60,23 @@ pub struct BlockChain<T>
 where
     T: BlockData,
 {
-    pub parent: Hash,
-    pub blocks: Vec<Block<T>>,
+    pub blocks: VecDeque<Block<T>>,
 }
 
 impl<T> BlockChain<T>
 where
     T: BlockData,
 {
-    pub fn new_rooted() -> Self {
+    pub fn new() -> Self {
         Self {
-            parent: Hash::empty(),
-            blocks: vec![],
-        }
-    }
-
-    pub fn new_parented(parent: Hash) -> Self {
-        Self {
-            parent,
-            blocks: vec![],
+            blocks: VecDeque::new(),
         }
     }
 
     fn add_payload(&mut self, payload: BlockPayload<T>) -> &Block<T> {
         let hash = payload.hash();
-        self.blocks.push(Block { hash, payload });
-        self.blocks.last().unwrap()
+        self.blocks.push_back(Block { hash, payload });
+        self.blocks.back().unwrap()
     }
 
     // The public interface to add data. It calls out to the proper internal methods
@@ -94,7 +85,7 @@ where
         self.add_payload(BlockPayload {
             parent: match self.tip() {
                 Some(block) => block.hash.clone(),
-                None => self.parent.clone(),
+                None => Hash::empty(),
             },
             timestamp: get_timestamp(),
             data,
@@ -103,7 +94,7 @@ where
 
     /// Get the current tip of the block chain.
     pub fn tip(&self) -> Option<&Block<T>> {
-        self.blocks.last()
+        self.blocks.back()
     }
 
     pub fn hash_to_block_index(&self, hash: &Hash) -> Option<usize> {
@@ -170,17 +161,29 @@ where
         }
 
         self.blocks.truncate(last_trusted_index + 1);
-        self.blocks.extend_from_slice(new_foreign_blocks);
+        self.blocks.extend(new_foreign_blocks.iter().cloned());
 
         Ok(())
+    }
+
+    /// Return a slice of the blocks. This will potentially reorder the VecDeque as
+    /// it needs to be continuous.
+    fn as_block_slice(&mut self) -> &[Block<T>] {
+        self.blocks.make_contiguous();
+        self.blocks.as_slices().0
+    }
+}
+
+impl<T: BlockData> From<VecDeque<Block<T>>> for BlockChain<T> {
+    fn from(blocks: VecDeque<Block<T>>) -> Self {
+        Self { blocks }
     }
 }
 
 impl<T: BlockData> From<Vec<Block<T>>> for BlockChain<T> {
     fn from(blocks: Vec<Block<T>>) -> Self {
         Self {
-            parent: Hash::empty(),
-            blocks,
+            blocks: blocks.into(),
         }
     }
 }
@@ -259,7 +262,7 @@ mod test {
 
     #[test]
     fn test_add_data() {
-        let mut block_chain = BlockChain::<String>::new_rooted();
+        let mut block_chain = BlockChain::<String>::new();
 
         block_chain.add_data("First block".into());
         block_chain.add_data("Second block".into());
@@ -274,7 +277,7 @@ mod test {
     fn test_rooted_reconcile() {
         // This will reconcile a longer blockchain with our shorter one.
 
-        let mut trusted = BlockChain::<String>::new_rooted();
+        let mut trusted = BlockChain::<String>::new();
 
         trusted.add_data("a".into());
         trusted.add_data("b".into());
@@ -288,7 +291,7 @@ mod test {
         assert_ne!(trusted, foreign, "The two are different");
 
         trusted
-            .reconcile(&foreign.blocks)
+            .reconcile(&foreign.as_block_slice())
             .expect("Failed to reconcile blockchains.");
 
         assert_eq!(trusted, foreign, "The two are equal");
@@ -296,7 +299,7 @@ mod test {
 
     #[test]
     fn test_rootless_reconcile() {
-        let mut trusted = BlockChain::<String>::new_rooted();
+        let mut trusted = BlockChain::<String>::new();
 
         trusted.add_data("a".into());
         trusted.add_data("b".into());
@@ -310,16 +313,19 @@ mod test {
         assert_ne!(trusted, foreign, "The two are different");
 
         trusted
-            .reconcile(&foreign.blocks[1..])
+            .reconcile(&foreign.as_block_slice()[1..])
             .expect("Failed to reconcile blockchains.");
 
         assert_eq!(trusted, foreign, "The two are equal");
-        assert_eq!(debug_blocks(&trusted.blocks), vec!["a", "b", "c", "d", "e"]);
+        assert_eq!(
+            debug_blocks(trusted.as_block_slice()),
+            vec!["a", "b", "c", "d", "e"]
+        );
     }
 
     #[test]
     fn test_foreign_wins() {
-        let mut trusted = BlockChain::<String>::new_rooted();
+        let mut trusted = BlockChain::<String>::new();
 
         trusted.add_data("a".into());
         trusted.add_data("b".into());
@@ -334,17 +340,20 @@ mod test {
         assert_ne!(trusted, foreign, "The two are different");
 
         trusted
-            .reconcile(&foreign.blocks[3..])
+            .reconcile(&foreign.as_block_slice()[3..])
             .expect("Failed to reconcile blockchains.");
 
         assert_eq!(trusted, foreign, "The two are equal");
 
-        assert_eq!(debug_blocks(&trusted.blocks), vec!["a", "b", "c", "d", "e"]);
+        assert_eq!(
+            debug_blocks(&trusted.as_block_slice()),
+            vec!["a", "b", "c", "d", "e"]
+        );
     }
 
     #[test]
     fn test_trusting_wins() {
-        let mut trusted = BlockChain::<String>::new_rooted();
+        let mut trusted = BlockChain::<String>::new();
 
         trusted.add_data("a".into());
         trusted.add_data("b".into());
@@ -360,18 +369,24 @@ mod test {
 
         assert_eq!(
             trusted
-                .reconcile(&foreign.blocks[3..])
+                .reconcile(&foreign.as_block_slice()[3..])
                 .expect_err("Expected an error"),
             ReconcileError::ShorterForeignBlocks
         );
 
-        assert_eq!(debug_blocks(&trusted.blocks), vec!["a", "b", "c", "d", "e"]);
-        assert_eq!(debug_blocks(&foreign.blocks), vec!["a", "b", "c", "losing"]);
+        assert_eq!(
+            debug_blocks(trusted.as_block_slice()),
+            vec!["a", "b", "c", "d", "e"]
+        );
+        assert_eq!(
+            debug_blocks(foreign.as_block_slice()),
+            vec!["a", "b", "c", "losing"]
+        );
     }
 
     #[test]
     fn test_failed_reconcile() {
-        let mut trusted = BlockChain::<String>::new_rooted();
+        let mut trusted = BlockChain::<String>::new();
 
         trusted.add_data("a".into());
         trusted.add_data("b".into());
@@ -394,7 +409,7 @@ mod test {
             .position(|b| b.payload.data == "E")
             .unwrap();
 
-        let blocks = &foreign.blocks[e_index..];
+        let blocks = &foreign.as_block_slice()[e_index..];
         assert_eq!(debug_blocks(&blocks), vec!["E", "F"]);
 
         assert_eq!(
@@ -407,7 +422,7 @@ mod test {
 
     #[test]
     fn test_serialize_block() {
-        let mut chain = BlockChain::<String>::new_rooted();
+        let mut chain = BlockChain::<String>::new();
         chain.add_data("data 1".into());
         let value = serde_json::to_value(chain.tip().unwrap())
             .expect("failed to convert to JSON value");
@@ -429,7 +444,7 @@ mod test {
 
     #[test]
     fn test_serialize_blocks() {
-        let mut chain = BlockChain::<String>::new_rooted();
+        let mut chain = BlockChain::<String>::new();
         chain.add_data("data 1".into());
         chain.add_data("data 2".into());
         let value =
@@ -462,11 +477,11 @@ mod test {
 
     #[test]
     fn test_serialize_blocks_slice() {
-        let mut chain = BlockChain::<String>::new_rooted();
+        let mut chain = BlockChain::<String>::new();
         chain.add_data("data 1".into());
         chain.add_data("data 2".into());
         chain.add_data("data 3".into());
-        let value = serde_json::to_value(&chain.blocks[1..])
+        let value = serde_json::to_value(&chain.as_block_slice()[1..])
             .expect("failed to convert to JSON value");
 
         // println!("{}", serde_json::to_string_pretty(&value).unwrap());
