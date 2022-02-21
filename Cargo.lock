@@ -995,17 +995,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd0c93bb4b0c6d9b77f4435b0ae98c24d17f1c45b2ff844c6151a07256ca923b"
 
 [[package]]
-name = "displaydoc"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3bf95dc3f046b9da4f2d51833c0d3547d8564ef6910f5c1ed130306a75b92886"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "dlib"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1311,9 +1300,9 @@ dependencies = [
 name = "garden"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bincode",
  "chrono",
- "displaydoc",
  "futures 0.3.19",
  "insta",
  "libp2p",
@@ -1327,6 +1316,7 @@ dependencies = [
  "serde_json",
  "structopt",
  "tempdir",
+ "thiserror",
  "tokio",
  "uuid",
 ]

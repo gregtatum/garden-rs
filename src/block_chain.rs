@@ -168,7 +168,7 @@ where
 
     /// Return a slice of the blocks. This will potentially reorder the VecDeque as
     /// it needs to be continuous.
-    fn as_block_slice(&mut self) -> &[Block<T>] {
+    pub fn as_block_slice(&mut self) -> &[Block<T>] {
         self.blocks.make_contiguous();
         self.blocks.as_slices().0
     }

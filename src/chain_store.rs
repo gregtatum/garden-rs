@@ -3,7 +3,7 @@ use crate::{
     hash::{Hash, StackStringHash},
     utils::map_err,
 };
-use displaydoc::Display;
+use anyhow::bail;
 use std::{
     borrow::Cow,
     cell::{RefCell, RefMut},
@@ -13,6 +13,7 @@ use std::{
     marker::PhantomData,
     path::{Path, PathBuf},
 };
+use thiserror::Error;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct HeadRef(Cow<'static, str>);
@@ -35,24 +36,22 @@ impl HeadRef {
 }
 
 impl TryFrom<String> for HeadRef {
-    type Error = ();
+    type Error = anyhow::Error;
     fn try_from(other: String) -> Result<Self, Self::Error> {
-        if HeadRef::validate_name(&other) {
-            Ok(Self(Cow::Owned(other)))
-        } else {
-            Err(())
+        if !HeadRef::validate_name(&other) {
+            bail!("The head ref did not have a valid name: {:?}", other);
         }
+        Ok(Self(Cow::Owned(other)))
     }
 }
 
 impl TryFrom<&'static str> for HeadRef {
-    type Error = ();
+    type Error = anyhow::Error;
     fn try_from(other: &'static str) -> Result<Self, Self::Error> {
-        if HeadRef::validate_name(&other) {
-            Ok(Self(Cow::Borrowed(other)))
-        } else {
-            Err(())
+        if !HeadRef::validate_name(&other) {
+            bail!("The head ref did not have a valid name: {:?}", other);
         }
+        Ok(Self(Cow::Borrowed(other)))
     }
 }
 
@@ -116,36 +115,36 @@ pub struct FsChainStore<T: BlockData> {
     unpersisted_block_count: usize,
 }
 
-#[derive(Display, Debug)]
+#[derive(Error, Debug)]
 pub enum ChainStoreError {
-    /// the root path was not valid
+    #[error("the root path was not valid")]
     RootPathNotValid,
-    /// failed to create the root directory
+    #[error("failed to create the root directory")]
     FailedToCreateRootDirectory,
-    /// failed to create chains directory
+    #[error("failed to create chains directory")]
     FailedToCreateChainsDirectory,
-    /// failed to create heads directory
+    #[error("failed to create heads directory")]
     FailedToCreateHeadsDirectory,
-    /// failed to create directory
+    #[error("failed to create directory")]
     FailedToCreateDirectory,
-    /// failed to create file
+    #[error("failed to create file")]
     FailedToCreateFile,
-    /// failed to serialize to file
+    #[error("failed to serialize to file")]
     FailedToSerializeToFile,
-    /// failed to write file
+    #[error("failed to write file")]
     FailedToWriteFile,
-    /// could not read directory
+    #[error("could not read directory")]
     CouldNotReadDirectory,
-    /// invalid ref hash
+    #[error("invalid ref hash")]
     InvalidRefHash,
-    /// failed to read ref
+    #[error("failed to read ref")]
     FailedToReadRef,
-    /// json serialization error: {description:?}
+    #[error("json serialization error: {description:?}")]
     JsonSerializationError {
         source: serde_json::Error,
         description: &'static str,
     },
-    /// file system error: {description:?} at {path:?}
+    #[error("file system error: {description:?} at {path:?}")]
     FileSystem {
         source: std::io::Error,
         path: Option<PathBuf>,
