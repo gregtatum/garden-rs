@@ -71,3 +71,46 @@ pub fn tree_lines<P: AsRef<Path>>(dir: P) -> Vec<String> {
     lines.pop(); // ""
     lines
 }
+
+#[cfg(test)]
+thread_local! {
+    pub static BLOCK_TIMESTAMP: std::cell::RefCell<i64> = std::cell::RefCell::new(0);
+}
+
+#[cfg(test)]
+pub fn get_timestamp() -> i64 {
+    let mut returns = 0;
+    BLOCK_TIMESTAMP.with(|f| {
+        returns = *f.borrow();
+        *f.borrow_mut() = returns + 1;
+    });
+    return returns;
+}
+
+/// Gets a test-safe timestamp.
+#[cfg(not(test))]
+pub fn get_timestamp() -> i64 {
+    chrono::Utc::now().timestamp()
+}
+
+#[cfg(test)]
+pub struct TimeStampScope {}
+
+#[cfg(test)]
+impl TimeStampScope {
+    pub fn new() -> Self {
+        BLOCK_TIMESTAMP.with(|f| {
+            *f.borrow_mut() = 0;
+        });
+        TimeStampScope {}
+    }
+}
+
+#[cfg(test)]
+impl Drop for TimeStampScope {
+    fn drop(&mut self) {
+        BLOCK_TIMESTAMP.with(|f| {
+            *f.borrow_mut() = 0;
+        });
+    }
+}

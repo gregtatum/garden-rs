@@ -120,7 +120,7 @@ mod test {
 
     #[test]
     fn test_create_garden_plot() {
-        let mut block_chain = BlockChain::<Action>::new();
+        let mut block_chain = BlockChain::<Action>::new_rooted();
         block_chain.add_data(Action::CreatePlot(GardenPlot::new("Greg's plot".into())));
         assert_display_snapshot!(serialize_for_test(&block_chain), @r###"
         [

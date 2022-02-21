@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::hash::Hash;
+use crate::{hash::Hash, utils::get_timestamp};
 
 use chrono::Utc;
 use ring::digest::{Context, SHA256};
@@ -60,6 +60,7 @@ pub struct BlockChain<T>
 where
     T: BlockData,
 {
+    pub parent: Hash,
     pub blocks: Vec<Block<T>>,
 }
 
@@ -67,8 +68,18 @@ impl<T> BlockChain<T>
 where
     T: BlockData,
 {
-    pub fn new() -> Self {
-        Self { blocks: vec![] }
+    pub fn new_rooted() -> Self {
+        Self {
+            parent: Hash::empty(),
+            blocks: vec![],
+        }
+    }
+
+    pub fn new_parented(parent: Hash) -> Self {
+        Self {
+            parent,
+            blocks: vec![],
+        }
     }
 
     fn add_payload(&mut self, payload: BlockPayload<T>) -> &Block<T> {
@@ -83,17 +94,9 @@ where
         self.add_payload(BlockPayload {
             parent: match self.tip() {
                 Some(block) => block.hash.clone(),
-                None => Hash::empty(),
+                None => self.parent.clone(),
             },
-            timestamp: if cfg!(test) {
-                // For tests only monotonically increase the timestamp.
-                match self.tip() {
-                    Some(block) => block.payload.timestamp + 1,
-                    None => 0,
-                }
-            } else {
-                Utc::now().timestamp()
-            },
+            timestamp: get_timestamp(),
             data,
         })
     }
@@ -175,7 +178,10 @@ where
 
 impl<T: BlockData> From<Vec<Block<T>>> for BlockChain<T> {
     fn from(blocks: Vec<Block<T>>) -> Self {
-        Self { blocks }
+        Self {
+            parent: Hash::empty(),
+            blocks,
+        }
     }
 }
 
@@ -214,7 +220,7 @@ impl<'a, T> BlockPayload<T>
 where
     T: BlockData,
 {
-    fn hash(&self) -> Hash {
+    pub fn hash(&self) -> Hash {
         let mut context = Context::new(&SHA256);
         context.update(&self.parent.0);
         context.update(&self.timestamp.to_le_bytes());
@@ -253,7 +259,7 @@ mod test {
 
     #[test]
     fn test_add_data() {
-        let mut block_chain = BlockChain::<String>::new();
+        let mut block_chain = BlockChain::<String>::new_rooted();
 
         block_chain.add_data("First block".into());
         block_chain.add_data("Second block".into());
@@ -268,7 +274,7 @@ mod test {
     fn test_rooted_reconcile() {
         // This will reconcile a longer blockchain with our shorter one.
 
-        let mut trusted = BlockChain::<String>::new();
+        let mut trusted = BlockChain::<String>::new_rooted();
 
         trusted.add_data("a".into());
         trusted.add_data("b".into());
@@ -290,7 +296,7 @@ mod test {
 
     #[test]
     fn test_rootless_reconcile() {
-        let mut trusted = BlockChain::<String>::new();
+        let mut trusted = BlockChain::<String>::new_rooted();
 
         trusted.add_data("a".into());
         trusted.add_data("b".into());
@@ -313,7 +319,7 @@ mod test {
 
     #[test]
     fn test_foreign_wins() {
-        let mut trusted = BlockChain::<String>::new();
+        let mut trusted = BlockChain::<String>::new_rooted();
 
         trusted.add_data("a".into());
         trusted.add_data("b".into());
@@ -338,7 +344,7 @@ mod test {
 
     #[test]
     fn test_trusting_wins() {
-        let mut trusted = BlockChain::<String>::new();
+        let mut trusted = BlockChain::<String>::new_rooted();
 
         trusted.add_data("a".into());
         trusted.add_data("b".into());
@@ -365,7 +371,7 @@ mod test {
 
     #[test]
     fn test_failed_reconcile() {
-        let mut trusted = BlockChain::<String>::new();
+        let mut trusted = BlockChain::<String>::new_rooted();
 
         trusted.add_data("a".into());
         trusted.add_data("b".into());
@@ -401,7 +407,7 @@ mod test {
 
     #[test]
     fn test_serialize_block() {
-        let mut chain = BlockChain::<String>::new();
+        let mut chain = BlockChain::<String>::new_rooted();
         chain.add_data("data 1".into());
         let value = serde_json::to_value(chain.tip().unwrap())
             .expect("failed to convert to JSON value");
@@ -423,7 +429,7 @@ mod test {
 
     #[test]
     fn test_serialize_blocks() {
-        let mut chain = BlockChain::<String>::new();
+        let mut chain = BlockChain::<String>::new_rooted();
         chain.add_data("data 1".into());
         chain.add_data("data 2".into());
         let value =
@@ -456,7 +462,7 @@ mod test {
 
     #[test]
     fn test_serialize_blocks_slice() {
-        let mut chain = BlockChain::<String>::new();
+        let mut chain = BlockChain::<String>::new_rooted();
         chain.add_data("data 1".into());
         chain.add_data("data 2".into());
         chain.add_data("data 3".into());

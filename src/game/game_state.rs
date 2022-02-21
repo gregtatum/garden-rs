@@ -1,4 +1,4 @@
-use crate::{chain_store::ChainStore, Action, Store};
+use crate::{chain_store::ChainStore, Action, StateStore};
 
 use super::{
     drawable::Draw,
@@ -21,8 +21,7 @@ pub struct GameState {
     gardens: Vec<Garden>,
     input_ui: Option<ui::InputUI>,
     input_handler: ui::InputHandler,
-    the_land: Store,
-    chain_store: Box<dyn ChainStore<Action>>,
+    state_store: StateStore,
 }
 
 const GAME_W: i32 = 80;
@@ -36,8 +35,7 @@ impl GameState {
             gardens: vec![],
             input_ui: None,
             input_handler: Default::default(),
-            the_land: Store::new(&mut *chain_store),
-            chain_store,
+            state_store: StateStore::new(chain_store),
         };
 
         if game_state.gardens.is_empty() {
@@ -87,7 +85,7 @@ impl GameState {
     pub fn handle_input(&mut self, text: String, ctx: &mut Rltk) {
         match self.input_handler {
             ui::InputHandler::NewGarden => {
-                let (hash, plot) = self.the_land.create_garden_plot(text);
+                let (hash, plot) = self.state_store.create_garden_plot(text);
                 let margin = 10;
                 let bbox = BBox {
                     top_left: Position::new(margin, margin),
@@ -101,8 +99,9 @@ impl GameState {
             }
             ui::InputHandler::MainMenu => {
                 if text == "Save" {
-                    self.chain_store
-                        .store(&self.the_land.block_chain)
+                    self.state_store
+                        .chain_store
+                        .persist()
                         .expect("Failed to store the block chain");
                 } else if text == "Exit" {
                     ctx.quit();
