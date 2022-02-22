@@ -8,10 +8,12 @@ pub mod game;
 pub mod garden;
 pub mod hash;
 pub mod reducers;
-pub mod state_store;
+mod state;
+pub mod store;
 pub mod utils;
 
 pub use actions::Action;
 pub use chain_store::ChainStore;
 pub use hash::Hash;
-pub use state_store::{State, StateStore};
+pub use state::{selectors, State};
+pub use store::Store;

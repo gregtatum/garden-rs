@@ -1,9 +1,8 @@
-use crate::{actions, chain_store::ChainStore, Action, StateStore};
+use crate::{actions, chain_store::ChainStore, selectors, Action, State, Store};
 use anyhow::Result;
 
 use super::{
     drawable::Draw,
-    garden::Garden,
     input_device::InputDevice,
     player::Player,
     primitives::{BBox, Position, Size},
@@ -19,27 +18,27 @@ pub enum Phase {
 pub struct GameState {
     player: Player,
     input_device: InputDevice,
-    gardens: Vec<Garden>,
     input_ui: Option<ui::InputUI>,
     input_handler: ui::InputHandler,
-    state_store: StateStore,
+    state_store: Store,
+    prev_state: State,
 }
 
-const GAME_W: i32 = 80;
-const GAME_H: i32 = 50;
+pub const GAME_W: i32 = 80;
+pub const GAME_H: i32 = 50;
 
 impl GameState {
     pub fn try_new(chain_store: Box<dyn ChainStore<Action>>) -> Result<Self> {
         let mut game_state = Self {
             player: Player::new(Position::new(-1, -1)),
             input_device: InputDevice::new(),
-            gardens: vec![],
             input_ui: None,
             input_handler: Default::default(),
-            state_store: StateStore::try_new(chain_store)?,
+            state_store: Store::try_new(chain_store)?,
+            prev_state: State::new(),
         };
 
-        if game_state.gardens.is_empty() {
+        if selectors::get_my_garden(&game_state.state_store.state).is_none() {
             game_state.ask_new_garden()
         }
 
@@ -68,10 +67,10 @@ impl GameState {
             self.show_main_menu();
         }
         self.player
-            .update(&self.input_device, &self.gardens, &self.input_ui);
-        for garden in &self.gardens {
-            garden.update();
-        }
+            .update(&self.input_device, &vec![], &self.input_ui);
+        // for garden in &self.gardens {
+        //     garden.update();
+        // }
         if let Some(ref mut input_ui) = self.input_ui {
             if let Some(text) = match input_ui {
                 ui::InputUI::Choices(input) => input.update(&self.input_device),
@@ -87,16 +86,6 @@ impl GameState {
         match self.input_handler {
             ui::InputHandler::NewGarden => {
                 self.state_store.dispatch(actions::create_garden_plot(text));
-                // let margin = 10;
-                // let bbox = BBox {
-                //     top_left: Position::new(margin, margin),
-                //     size: Size::new(GAME_W - margin * 2, GAME_H - margin * 2),
-                // };
-                // if self.gardens.len() == 0 {
-                //     // This is the first garden, place the player in it.
-                //     self.player.position = bbox.center();
-                // }
-                // self.gardens.push(Garden::new(bbox, hash, plot));
             }
             ui::InputHandler::MainMenu => {
                 if text == "Save" {
@@ -113,9 +102,12 @@ impl GameState {
 
     pub fn draw(&mut self, ctx: &mut Rltk) {
         ctx.cls();
-        for garden in &self.gardens {
-            garden.draw(ctx, garden)
+        if let Some(my_garden) = selectors::get_drawable_garden(&self.state_store.state) {
+            my_garden.draw(ctx, &my_garden);
         }
+        // for garden in &self.gardens {
+        //     garden.draw(ctx, garden)
+        // }
         self.player.draw(ctx, &self.player);
         if let Some(ref input_ui) = self.input_ui {
             match input_ui {
@@ -134,5 +126,6 @@ impl rltk::GameState for GameState {
         }
         self.update(ctx);
         self.draw(ctx);
+        self.prev_state = self.state_store.state.clone();
     }
 }

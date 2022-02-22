@@ -2,15 +2,15 @@ use std::rc::Rc;
 
 use anyhow::{bail, Result};
 
-use crate::{garden::GardenPlot, reducers, Action, ChainStore, Hash};
+use crate::{garden::GardenPlot, reducers, Action, ChainStore, Hash, State};
 
 #[derive(Debug)]
-pub struct StateStore {
+pub struct Store {
     pub chains: Box<dyn ChainStore<Action>>,
     pub state: State,
 }
 
-impl StateStore {
+impl Store {
     pub fn try_new(chain_store: Box<dyn ChainStore<Action>>) -> Result<Self> {
         let mut store = Self {
             chains: chain_store,
@@ -54,23 +54,6 @@ impl StateStore {
     }
 }
 
-#[derive(PartialEq, Debug)]
-pub struct State {
-    my_garden: Option<Rc<GardenPlot>>,
-}
-
-impl State {
-    pub fn new() -> Self {
-        Self { my_garden: None }
-    }
-
-    pub fn reduce(&self, event: &Action) -> State {
-        State {
-            my_garden: reducers::garden(self.my_garden.clone(), event),
-        }
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -85,7 +68,7 @@ mod test {
         #[allow(dead_code)] // RAII
         pub tmp_dir: TempDir,
         pub path: PathBuf,
-        pub store: StateStore,
+        pub store: Store,
     }
 
     impl StateStoreTest {
@@ -99,8 +82,7 @@ mod test {
                 FsChainStore::<Action>::try_new(path.clone(), head_ref)
                     .expect("Failed to create ChainStore"),
             );
-            let store =
-                StateStore::try_new(chain_store).expect("Failed to create StateStore");
+            let store = Store::try_new(chain_store).expect("Failed to create StateStore");
 
             Self {
                 tmp_dir,
@@ -132,7 +114,7 @@ mod test {
             .expect("Failed to create ChainStore"),
         );
 
-        let store2 = StateStore::try_new(chains).expect("Failed to create StateStore.");
+        let store2 = Store::try_new(chains).expect("Failed to create StateStore.");
 
         assert_eq!(store.state, store2.state);
     }

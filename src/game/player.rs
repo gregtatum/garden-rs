@@ -1,6 +1,7 @@
+use crate::selectors::DrawableGarden;
+
 use super::{
     drawable,
-    garden::Garden,
     input_device::InputDevice,
     primitives::{Entity, Position},
     ui,
@@ -28,7 +29,7 @@ impl Player {
     pub fn update(
         &mut self,
         input_device: &InputDevice,
-        gardens: &Vec<Garden>,
+        gardens: &Vec<DrawableGarden>,
         input: &Option<ui::InputUI>,
     ) {
         if input.is_some() {
