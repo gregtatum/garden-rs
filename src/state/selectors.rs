@@ -11,7 +11,7 @@ use paste::paste;
 use rltk::{Rltk, RGB};
 use std::{cell::RefCell, rc::Rc};
 
-pub fn get_my_garden(state: Rc<State>) -> Rc<Option<Rc<GardenPlot>>> {
+pub fn get_my_garden(state: Rc<State>) -> Option<Rc<GardenPlot>> {
     state.my_garden.clone()
 }
 
@@ -74,18 +74,45 @@ impl Entity for DrawableGarden {
     }
 }
 
+// Abstract over extracting values from Option<Rc<T>> and Rc<T>, so that we can
+// do pointer comparison.
+trait MaybeRc<T> {
+    fn cache_is_some(&self) -> bool;
+    fn cache_unwrap(&self) -> &Rc<T>;
+}
+
+impl<T> MaybeRc<T> for Option<Rc<T>> {
+    fn cache_is_some(&self) -> bool {
+        self.is_some()
+    }
+
+    fn cache_unwrap(&self) -> &Rc<T> {
+        &self
+            .as_ref()
+            .expect("Logic error, cache unwrapping failed.")
+    }
+}
+
+impl<T> MaybeRc<T> for Rc<T> {
+    fn cache_is_some(&self) -> bool {
+        true
+    }
+
+    fn cache_unwrap(&self) -> &Rc<T> {
+        self
+    }
+}
+
+// Create a selector
 macro_rules! selector {
-    ({
-        name: $fn_name:ident,
-        state: $State:ty,
-        returns: $Returns:ty,
-        selectors: {
-            $(
-                $selector_var_name:ident: $selector_fn_name:ident -> $SelectorReturns:ty
-            ),*
-        },
-        contents: $contents:tt
-    }) => { paste! {
+    (
+        pub fn $fn_name:ident(state: $State:ty) -> $Returns:ty {
+        memoize |
+            $( $selector_var_name:ident: $selector_fn_name:ident -> $SelectorReturns:ty ),*
+        |
+        $contents:tt
+    }
+    ) => { paste! {
         pub fn $fn_name(state: $State) -> $Returns {
             // Call out to the $fn_name_selector_impl module for proper macro hygiene.
             [<$fn_name _selector_impl>]::$fn_name(state)
@@ -137,9 +164,22 @@ macro_rules! selector {
                         $( ref [<cached_ $selector_var_name>] ),*
                     )) = *f.borrow() {
                         $(
-                            // Check pointer equality.
-                            if cache_matches && !Rc::ptr_eq(&$selector_var_name, [<cached_ $selector_var_name>]) {
-                                cache_matches = false;
+                            if cache_matches {
+                                if (
+                                    // The emptiness doesn't match.
+                                    $selector_var_name.cache_is_some() != [<cached_ $selector_var_name>].cache_is_some()
+                                ) || (
+                                    // Ensure both values have pointers to extract.
+                                    $selector_var_name.cache_is_some() &&
+                                    [<cached_ $selector_var_name>].cache_is_some() &&
+                                    // Check the pointers for equality.
+                                    !Rc::ptr_eq(
+                                        $selector_var_name.cache_unwrap(),
+                                        [<cached_ $selector_var_name>].cache_unwrap()
+                                    )
+                                ){
+                                    cache_matches = false;
+                                }
                             }
                         )*
                     } else {
@@ -191,26 +231,22 @@ macro_rules! selector {
     }};
 }
 
-selector!({
-    name: get_drawable_garden,
-    state: Rc<State>,
-    returns: Rc<Option<DrawableGarden>>,
-    selectors: {
-        plot: get_my_garden -> Rc<Option<Rc<GardenPlot>>>
-    },
-    contents: {
-        if let Some(ref plot) = *plot {
+selector!(
+    pub fn get_drawable_garden(state: Rc<State>) -> Option<Rc<DrawableGarden>> {
+        memoize |plot: get_my_garden -> Option<Rc<GardenPlot>>| {
+            if let Some(ref plot) = plot {
             let margin = 10;
             let bbox = BBox {
                 top_left: Position::new(margin, margin),
                 size: Size::new(GAME_W - margin * 2, GAME_W - margin * 2),
             };
             let todo = Hash::empty();
-            return Rc::from(Some(DrawableGarden::new(bbox, todo, plot.clone())));
+            return Some(Rc::from(DrawableGarden::new(bbox, todo, plot.clone())));
+            }
+            None
         }
-        Rc::from(None)
     }
-});
+);
 
 #[cfg(test)]
 pub mod test {
@@ -230,21 +266,19 @@ pub mod test {
         state.size.clone()
     }
 
-    selector!({
-        name: get_bbox,
-        state: Rc<TestState>,
-        returns: Rc<BBox<i32>>,
-        selectors: {
-            top_left: get_position -> Rc<Position>,
-            size: get_size -> Rc<Size>
-        },
-        contents: {
-            Rc::from(BBox {
-                top_left: *top_left,
-                size: *size,
-            })
+    selector!(
+        pub fn get_bbox(state: Rc<TestState>) -> Rc<BBox<i32>> {
+            memoize |
+                top_left: get_position -> Rc<Position>,
+                size: get_size -> Rc<Size>
+            | {
+                Rc::from(BBox {
+                    top_left: *top_left,
+                    size: *size,
+                })
+            }
         }
-    });
+    );
 
     #[test]
     fn test_state() {

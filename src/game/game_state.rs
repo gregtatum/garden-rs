@@ -108,8 +108,8 @@ impl GameState {
 
     pub fn draw(&mut self, ctx: &mut Rltk) {
         ctx.cls();
-        if let Some(ref my_garden) = *selectors::get_drawable_garden(self.state()) {
-            my_garden.draw(ctx, my_garden);
+        if let Some(my_garden) = selectors::get_drawable_garden(self.state()) {
+            my_garden.draw(ctx, &*my_garden);
         }
         // for garden in &self.gardens {
         //     garden.draw(ctx, garden)
