@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use uuid::Uuid;
 
 /// Create a garden plot.
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct GardenPlot {
     pub uuid: Uuid,
     pub name: String,

@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crate::{actions, chain_store::ChainStore, selectors, Action, State, Store};
 use anyhow::Result;
 
@@ -21,7 +23,7 @@ pub struct GameState {
     input_ui: Option<ui::InputUI>,
     input_handler: ui::InputHandler,
     state_store: Store,
-    prev_state: State,
+    prev_state: Rc<State>,
 }
 
 pub const GAME_W: i32 = 80;
@@ -35,14 +37,18 @@ impl GameState {
             input_ui: None,
             input_handler: Default::default(),
             state_store: Store::try_new(chain_store)?,
-            prev_state: State::new(),
+            prev_state: Rc::new(State::new()),
         };
 
-        if selectors::get_my_garden(&game_state.state_store.state).is_none() {
+        if selectors::get_my_garden(game_state.state()).is_none() {
             game_state.ask_new_garden()
         }
 
         Ok(game_state)
+    }
+
+    pub fn state(&self) -> Rc<State> {
+        self.state_store.state.clone()
     }
 
     pub fn ask_new_garden(&mut self) {
@@ -102,8 +108,8 @@ impl GameState {
 
     pub fn draw(&mut self, ctx: &mut Rltk) {
         ctx.cls();
-        if let Some(my_garden) = selectors::get_drawable_garden(&self.state_store.state) {
-            my_garden.draw(ctx, &my_garden);
+        if let Some(ref my_garden) = *selectors::get_drawable_garden(self.state()) {
+            my_garden.draw(ctx, my_garden);
         }
         // for garden in &self.gardens {
         //     garden.draw(ctx, garden)
@@ -126,6 +132,6 @@ impl rltk::GameState for GameState {
         }
         self.update(ctx);
         self.draw(ctx);
-        self.prev_state = self.state_store.state.clone();
+        self.prev_state = self.state();
     }
 }

@@ -3,12 +3,12 @@ use std::rc::Rc;
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct State {
-    my_garden: Option<Rc<GardenPlot>>,
+    my_garden: Rc<Option<Rc<GardenPlot>>>,
 }
 
 impl State {
     pub fn new() -> Self {
-        Self { my_garden: None }
+        Self { my_garden: Rc::from(None) }
     }
 
     pub fn reduce(&self, event: &Action) -> State {

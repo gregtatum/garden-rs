@@ -7,14 +7,14 @@ use crate::{garden::GardenPlot, reducers, Action, ChainStore, Hash, State};
 #[derive(Debug)]
 pub struct Store {
     pub chains: Box<dyn ChainStore<Action>>,
-    pub state: State,
+    pub state: Rc<State>,
 }
 
 impl Store {
     pub fn try_new(chain_store: Box<dyn ChainStore<Action>>) -> Result<Self> {
         let mut store = Self {
             chains: chain_store,
-            state: State::new(),
+            state: Rc::new(State::new()),
         };
 
         store.load_untrusted_chain_store()?;
@@ -23,7 +23,7 @@ impl Store {
     }
 
     pub fn dispatch(&mut self, action: Action) {
-        self.state = self.state.reduce(&action);
+        self.state = Rc::from(self.state.reduce(&action));
         self.chains.add(action);
     }
 
@@ -47,7 +47,7 @@ impl Store {
             }
             prev_hash = block.hash.clone();
 
-            self.state = self.state.reduce(&block.payload.data);
+            self.state = Rc::from(self.state.reduce(&block.payload.data));
         }
 
         Ok(())
