@@ -38,3 +38,7 @@ tempdir = "0.3"
 insta = "1.10"
 pretty_assertions = "1.1"
 rand = "0.8"
+
+[features]
+# Spews a log of cache hit or miss for selectors.
+selector-cache-log = []
