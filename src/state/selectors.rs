@@ -133,25 +133,18 @@ macro_rules! selector {
                 // See if the cached args match.
                 let mut cache_matches = true;
                 args_cache.with(|f| {
-                    {
-                        // Scope this immutable borrow
-                        let cache: &Option<ArgsCacheTuple> = &f.borrow();
-
-                        if cache.is_none() {
-                            cache_matches = false;
-                        } else {
-                            // Get each variable out of the cache.
-                            let (
-                                $( [<cached_ $selector_var_name>] ),*
-                            ) = cache.unwrap();
-
-                            $(
-                                // Check pointer equality.
-                                if cache_matches && !std::rc::Rc::ptr_eq($selector_var_name, &[<cached_ $selector_var_name>]) {
-                                    cache_matches = false;
-                                }
-                            )*
-                        }
+                    // Get each variable out of the cache.
+                    if let Some((
+                        $( ref [<cached_ $selector_var_name>] ),*
+                    )) = *f.borrow() {
+                        $(
+                            // Check pointer equality.
+                            if cache_matches && !std::rc::Rc::ptr_eq(&$selector_var_name, [<cached_ $selector_var_name>]) {
+                                cache_matches = false;
+                            }
+                        )*
+                    } else {
+                        cache_matches = false;
                     }
 
                     if !cache_matches {
@@ -165,9 +158,9 @@ macro_rules! selector {
 
                 // This is a cache hit, return from the cache.
                 if cache_matches {
-                    let result: Option<$Returns> = None;
+                    let mut result: Option<$Returns> = None;
                     returns_cache.with(|f| {
-                        result = f.borrow().clone();
+                        result = (*f.borrow()).clone();
                     });
                     return result.expect("Logic error, failed to get returns from cache.");
                 }
