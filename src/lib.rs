@@ -12,7 +12,7 @@ mod state;
 pub mod store;
 pub mod utils;
 
-pub use actions::Action;
+pub use actions::{Action, ChainAction, GameAction};
 pub use chain_store::ChainStore;
 pub use hash::Hash;
 pub use state::{selectors, State};

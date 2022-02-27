@@ -546,7 +546,7 @@ fn resolve_fs_ref(path: &PathBuf) -> Result<Hash, ResolveRefError> {
 mod test {
     use crate::{
         utils::{tree_lines, TimeStampScope},
-        Action,
+        ChainAction,
     };
 
     use super::*;
@@ -569,7 +569,7 @@ mod test {
         let tmp_dir = TempDir::new("example").expect("Failed to create a temp directory");
         let path: PathBuf = tmp_dir.into_path();
         let head_ref = HeadRef::try_from("my-garden").unwrap();
-        FsChainStore::<Action>::try_new(path.clone(), head_ref)
+        FsChainStore::<ChainAction>::try_new(path.clone(), head_ref)
             .expect("Failed to create ChainStore");
 
         assert!(subpath_exists(&path, "chains"));
@@ -582,7 +582,7 @@ mod test {
         let mut path: PathBuf = tmp_dir.into_path();
         path.push(".garden");
         let head_ref = HeadRef::try_from("my-garden").unwrap();
-        FsChainStore::<Action>::try_new(path.clone(), head_ref)
+        FsChainStore::<ChainAction>::try_new(path.clone(), head_ref)
             .expect("Failed to create ChainStore");
 
         assert!(subpath_exists(&path, "chains"));
@@ -596,7 +596,7 @@ mod test {
         path.push("not-here");
         path.push(".garden");
         let head_ref = HeadRef::try_from("my-garden").unwrap();
-        assert!(FsChainStore::<Action>::try_new(path.clone(), head_ref).is_err());
+        assert!(FsChainStore::<ChainAction>::try_new(path.clone(), head_ref).is_err());
     }
 
     fn ls(path: &PathBuf) -> Vec<String> {

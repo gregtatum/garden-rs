@@ -1,7 +1,6 @@
-use crate::selectors::DrawableGarden;
-
 use super::{
     drawable,
+    garden::DrawableGarden,
     input_device::InputDevice,
     primitives::{Entity, Position},
     ui,
@@ -10,14 +9,12 @@ use rltk::{Rltk, RGB};
 
 #[derive(PartialEq)]
 pub struct Player {
-    pub position: Position,
     pub glyph: drawable::Glyph,
 }
 
 impl Player {
-    pub fn new(position: Position) -> Self {
+    pub fn new() -> Self {
         Self {
-            position,
             glyph: drawable::Glyph {
                 glyph: rltk::to_cp437('@'),
                 fg: RGB::named(rltk::YELLOW),

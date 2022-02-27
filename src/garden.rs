@@ -35,7 +35,7 @@ mod test {
     use super::*;
     use crate::{
         block_chain::{BlockChain, BlockData},
-        Action,
+        Action, ChainAction,
     };
     use insta::assert_display_snapshot;
     use serde_json::Value;
@@ -120,8 +120,10 @@ mod test {
 
     #[test]
     fn test_create_garden_plot() {
-        let mut block_chain = BlockChain::<Action>::new();
-        block_chain.add_data(Action::CreatePlot(GardenPlot::new("Greg's plot".into())));
+        let mut block_chain = BlockChain::<ChainAction>::new();
+        block_chain.add_data(ChainAction::CreatePlot(GardenPlot::new(
+            "Greg's plot".into(),
+        )));
         assert_display_snapshot!(serialize_for_test(&block_chain), @r###"
         [
           {

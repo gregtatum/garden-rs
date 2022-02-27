@@ -2,16 +2,16 @@ use std::rc::Rc;
 
 use anyhow::{bail, Result};
 
-use crate::{garden::GardenPlot, reducers, Action, ChainStore, Hash, State};
+use crate::{garden::GardenPlot, reducers, Action, ChainAction, ChainStore, Hash, State};
 
 #[derive(Debug)]
 pub struct Store {
-    pub chains: Box<dyn ChainStore<Action>>,
+    pub chains: Box<dyn ChainStore<ChainAction>>,
     pub state: Rc<State>,
 }
 
 impl Store {
-    pub fn try_new(chain_store: Box<dyn ChainStore<Action>>) -> Result<Self> {
+    pub fn try_new(chain_store: Box<dyn ChainStore<ChainAction>>) -> Result<Self> {
         let mut store = Self {
             chains: chain_store,
             state: Rc::new(State::new()),
@@ -24,7 +24,9 @@ impl Store {
 
     pub fn dispatch(&mut self, action: Action) {
         self.state = Rc::from(self.state.reduce(&action));
-        self.chains.add(action);
+        if let Action::Chain(action) = action {
+            self.chains.add(action);
+        }
     }
 
     pub fn load_untrusted_chain_store(&mut self) -> Result<()> {
@@ -47,7 +49,7 @@ impl Store {
             }
             prev_hash = block.hash.clone();
 
-            self.state = Rc::from(self.state.reduce(&block.payload.data));
+            self.state = Rc::from(self.state.reduce(&block.payload.data.into()));
         }
 
         Ok(())
@@ -79,7 +81,7 @@ mod test {
             let head_ref =
                 HeadRef::try_from("my-garden").expect("Failed to create HeadRef");
             let chain_store = Box::new(
-                FsChainStore::<Action>::try_new(path.clone(), head_ref)
+                FsChainStore::<ChainAction>::try_new(path.clone(), head_ref)
                     .expect("Failed to create ChainStore"),
             );
             let store = Store::try_new(chain_store).expect("Failed to create StateStore");
@@ -107,7 +109,7 @@ mod test {
             .expect("Failed to persist chain store");
 
         let chains = Box::new(
-            FsChainStore::<Action>::try_new(
+            FsChainStore::<ChainAction>::try_new(
                 path.clone(),
                 store.chains.head_ref().clone(),
             )

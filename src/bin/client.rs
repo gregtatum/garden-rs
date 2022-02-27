@@ -37,7 +37,7 @@ struct CliOptions {
 async fn main() -> Result<(), Box<dyn Error>> {
     let cli_options = CliOptions::from_args();
 
-    let _chain_store = FsChainStore::<Action>::try_new(
+    let _chain_store = FsChainStore::<ChainAction>::try_new(
         cli_options.save_path,
         HeadRef::try_from("my-garden").expect("Failed to create HeadRef"),
     );

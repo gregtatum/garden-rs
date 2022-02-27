@@ -1,6 +1,8 @@
 use std::rc::Rc;
 
-use crate::{actions, chain_store::ChainStore, selectors, Action, State, Store};
+use crate::{
+    actions, chain_store::ChainStore, selectors, Action, ChainAction, State, Store,
+};
 use anyhow::Result;
 
 use super::{
@@ -30,9 +32,9 @@ pub const GAME_W: i32 = 80;
 pub const GAME_H: i32 = 50;
 
 impl GameState {
-    pub fn try_new(chain_store: Box<dyn ChainStore<Action>>) -> Result<Self> {
+    pub fn try_new(chain_store: Box<dyn ChainStore<ChainAction>>) -> Result<Self> {
         let mut game_state = Self {
-            player: Player::new(Position::new(-1, -1)),
+            player: Player::new(),
             input_device: InputDevice::new(),
             input_ui: None,
             input_handler: Default::default(),

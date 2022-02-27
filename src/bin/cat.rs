@@ -32,7 +32,7 @@ fn main() -> Result<()> {
     }
 
     let mut chain_store =
-        FsChainStore::<Action>::try_new(path.clone(), head_ref.clone())?;
+        FsChainStore::<ChainAction>::try_new(path.clone(), head_ref.clone())?;
 
     chain_store.load_all_chains()?;
 

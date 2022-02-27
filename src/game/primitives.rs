@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 pub trait Number:
     // Define all the traits needed for generic numbers.
     Copy
@@ -38,7 +40,7 @@ impl Entity for Position {
 
 /// I should probably just import a vector library instead of roll
 /// my own, but here we are.
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq)]
 pub struct Vec2<T: Number> {
     pub x: T,
     pub y: T,
