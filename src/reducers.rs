@@ -1,9 +1,11 @@
-use crate::{game::primitives::Position, garden::GardenPlot, Action};
+use crate::{
+    game::primitives::Position, garden::GardenPlot, Action, ChainAction, GameAction,
+};
 use std::rc::Rc;
 
-pub fn garden(state: Option<Rc<GardenPlot>>, event: &Action) -> Option<Rc<GardenPlot>> {
-    match event {
-        Action::CreatePlot(plot) => {
+pub fn garden(state: Option<Rc<GardenPlot>>, action: &Action) -> Option<Rc<GardenPlot>> {
+    match action {
+        Action::Chain(ChainAction::CreatePlot(plot)) => {
             if state.is_some() {
                 // Do not allow overriding the garden.
                 return state;
@@ -14,19 +16,28 @@ pub fn garden(state: Option<Rc<GardenPlot>>, event: &Action) -> Option<Rc<Garden
     }
 }
 
-pub fn player_position(
-    state: Option<Rc<Position>>,
-    event: &Action,
-) -> Option<Rc<Position>> {
-    match event {
-        Action::MovePlayer(position) => Some(Rc::new(*position)),
+pub fn game_tick(state: Option<i64>, action: &Action) -> Option<i64> {
+    match action {
+        Action::Game(GameAction::TickGame(tick)) => Some(*tick),
         _ => state,
     }
 }
 
-pub fn game_tick(state: i64, event: &Action) -> i64 {
+pub fn move_intent(
+    state: Option<Rc<(Position, i64)>>,
+    event: &Action,
+) -> Option<Rc<(Position, i64)>> {
     match event {
-        Action::TickGame(tick) => *tick,
+        Action::Game(GameAction::TickGame(tick)) => None,
+        _ => state,
+    }
+}
+
+pub fn player_position(state: Option<Position>, event: &Action) -> Option<Position> {
+    match event {
+        Action::Chain(ChainAction::MovePlayer((position, move_intent))) => {
+            Some(*position)
+        }
         _ => state,
     }
 }

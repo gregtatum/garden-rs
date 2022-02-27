@@ -38,29 +38,17 @@ selector!(
 );
 
 selector!(
-    pub fn get_move_intent(state: Rc<State>) -> Option<Position> {
-        memoize |
-            game_tick: get_game_tick -> i64
-        | {
-            if game_tick == state.move_intent.1 {
-                if
-                Some(state.move_intent.0)
-        }
-    }
-);
-
-selector!(
-    pub fn get_player_position(state: Rc<State>) -> Option<Position> {
-        memoize |
-            drawable_garden: get_drawable_garden -> Option<Rc<DrawableGarden>>,
-            game_tick: get_game_tick -> i64,
-            move_intent: get_game_tick -> i64,
-
-        | {
-            if let Some(drawable_garden) = drawable_garden {
-                return Some(drawable_garden.bbox.center());
+    pub fn get_drawable_gardens(state: Rc<State>) -> Rc<Vec<Rc<DrawableGarden>>> {
+        memoize |my_garden: get_drawable_garden -> Option<Rc<DrawableGarden>>| {
+            let mut gardens = vec![];
+            if let Some(ref my_garden) = my_garden {
+                gardens.push(my_garden.clone());
             }
-            None
+            Rc::from(gardens)
         }
     }
 );
+
+pub fn get_player_position(state: Rc<State>) -> Option<Position> {
+    state.player_position
+}

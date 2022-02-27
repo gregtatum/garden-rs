@@ -1,7 +1,12 @@
-use crate::game::{
-    drawable,
-    input_device::InputDevice,
-    primitives::{BBox, Entity, Position, Size},
+use std::rc::Rc;
+
+use crate::{
+    game::{
+        drawable,
+        input_device::InputDevice,
+        primitives::{BBox, Entity, Position, Size},
+    },
+    State,
 };
 use rltk::Rltk;
 
@@ -73,10 +78,11 @@ impl Choices {
 }
 
 impl drawable::Draw for Choices {
-    fn draw<T: Entity>(&self, ctx: &mut Rltk, _entity: &T) {
-        self.box_.draw(ctx, self);
+    fn draw<T: Entity>(&self, state: Rc<State>, ctx: &mut Rltk, _entity: &T) {
+        self.box_.draw(state.clone(), ctx, self);
         for (i, value) in self.values.iter().enumerate() {
             value.draw(
+                state.clone(),
                 ctx,
                 &Position::new(
                     self.bbox.top_left.x + 3,
@@ -85,6 +91,7 @@ impl drawable::Draw for Choices {
             );
         }
         self.cursor.draw(
+            state,
             ctx,
             &Position::new(
                 self.bbox.top_left.x + 1,
@@ -95,14 +102,14 @@ impl drawable::Draw for Choices {
 }
 
 impl Entity for Choices {
-    fn position<'a>(&'a self) -> Position {
+    fn position<'a>(&'a self, _state: Rc<State>) -> Position {
         Position::new(
             self.bbox.top_left.x + (self.bbox.size.x / 2),
             self.bbox.top_left.y + (self.bbox.size.y / 2),
         )
     }
 
-    fn bbox<'a>(&'a self) -> BBox<i32> {
+    fn bbox<'a>(&'a self, _state: Rc<State>) -> BBox<i32> {
         self.bbox.clone()
     }
 }

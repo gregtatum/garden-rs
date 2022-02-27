@@ -7,7 +7,7 @@ use std::rc::Rc;
 pub struct State {
     my_garden: Option<Rc<GardenPlot>>,
     game_tick: Option<i64>,
-    move_intent: Option<(Position, i64)>,
+    player_position: Option<Position>,
 }
 
 impl State {
@@ -15,16 +15,16 @@ impl State {
         Self {
             my_garden: None,
             game_tick: Some(0),
-            move_intent: None,
+            player_position: None,
         }
     }
 
     pub fn reduce(&self, action: &Action) -> State {
         use reducers::*;
-        combine_reducers!(State, action, {
+        combine_reducers!(self, State, action, {
             my_garden: garden,
             game_tick: game_tick,
-            move_intent: move_intent,
+            player_position: player_position
         })
     }
 }

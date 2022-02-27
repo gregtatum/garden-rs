@@ -229,14 +229,20 @@ macro_rules! selector {
 #[macro_export]
 macro_rules! combine_reducers {
     (
-        $state:ty,
+        $self:ident,
+        $state:ident,
         $action:ident,
         {
-            $( $member:ident: $reducer:ty ),*
+            $( $member:ident: $reducer:ident ),*
         }
     ) => {
-        $state {
-            $( $member: $reducer(self.$member.clone(), $action) ),*
+        {
+            $(
+                assert_fields!($state: $member);
+            )*
+            $state {
+                $( $member: $reducer($self.$member.clone(), $action) ),*
+            }
         }
     }
 }

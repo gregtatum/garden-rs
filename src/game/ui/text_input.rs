@@ -1,9 +1,14 @@
+use std::rc::Rc;
+
 use rltk::Rltk;
 
-use crate::game::{
-    drawable,
-    input_device::InputDevice,
-    primitives::{BBox, Entity, Position, Size},
+use crate::{
+    game::{
+        drawable,
+        input_device::InputDevice,
+        primitives::{BBox, Entity, Position, Size},
+    },
+    State,
 };
 
 #[derive(PartialEq, Debug, Clone)]
@@ -74,14 +79,16 @@ impl TextInput {
 }
 
 impl drawable::Draw for TextInput {
-    fn draw<T: Entity>(&self, ctx: &mut Rltk, _entity: &T) {
-        self.box_.draw(ctx, self);
+    fn draw<T: Entity>(&self, state: Rc<State>, ctx: &mut Rltk, _entity: &T) {
+        self.box_.draw(state.clone(), ctx, self);
         self.text.draw(
+            state.clone(),
             ctx,
             &Position::new(self.bbox.top_left.x + 2, self.bbox.top_left.y + 2),
         );
         if self.blink_time < BLINK / 2.0 {
             self.cursor.draw(
+                state,
                 ctx,
                 &Position::new(
                     self.bbox.top_left.x + 2 + self.text.string.len() as i32,
@@ -93,14 +100,14 @@ impl drawable::Draw for TextInput {
 }
 
 impl Entity for TextInput {
-    fn position<'a>(&'a self) -> Position {
+    fn position<'a>(&'a self, _state: Rc<State>) -> Position {
         Position::new(
             self.bbox.top_left.x + (self.bbox.size.x / 2),
             self.bbox.top_left.y + (self.bbox.size.y / 2),
         )
     }
 
-    fn bbox<'a>(&'a self) -> BBox<i32> {
+    fn bbox<'a>(&'a self, _state: Rc<State>) -> BBox<i32> {
         self.bbox.clone()
     }
 }

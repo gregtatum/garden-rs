@@ -17,3 +17,6 @@ pub use chain_store::ChainStore;
 pub use hash::Hash;
 pub use state::{selectors, State};
 pub use store::Store;
+
+#[macro_use]
+extern crate static_assertions;

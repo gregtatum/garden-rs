@@ -7,7 +7,7 @@ use std::{fs, path::PathBuf};
 use garden::{
     chain_store::{FsChainStore, HeadRef},
     utils::path_join,
-    Action,
+    ChainAction,
 };
 use structopt::StructOpt;
 

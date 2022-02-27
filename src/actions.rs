@@ -1,9 +1,14 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, rc::Rc};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    block_chain::SerializedBytes, game::primitives::Position, garden::GardenPlot, utils::get_timestamp,
+    block_chain::SerializedBytes,
+    game::{garden::DrawableGarden, input_device::InputDevice, primitives::Position},
+    garden::GardenPlot,
+    selectors,
+    utils::get_timestamp,
+    State, Store,
 };
 
 pub enum Action {
@@ -31,7 +36,12 @@ pub enum GameAction {
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 pub enum ChainAction {
     CreatePlot(GardenPlot),
-    MovePlayer((Position, i64)),
+    MovePlayer(
+        (
+            Position, // position
+            Position, // move intent
+        ),
+    ),
 }
 
 impl SerializedBytes for ChainAction {
@@ -44,10 +54,35 @@ pub fn create_garden_plot(name: String) -> Action {
     ChainAction::CreatePlot(GardenPlot::new(name)).into()
 }
 
-pub fn move_player(position: Position, game_tick: i64) -> Action {
-    ChainAction::MovePlayer((position, game_tick)).into()
-}
-
 pub fn tick_game() -> Action {
     GameAction::TickGame(get_timestamp()).into()
+}
+
+pub fn maybe_move_player(store: &mut Store, input_device: &InputDevice) {
+    let position = selectors::get_player_position(store.state());
+    if position.is_none() {
+        return;
+    }
+    let position = position.unwrap();
+
+    let mut next_position = position + input_device.move_intent;
+
+    for garden in &(*selectors::get_drawable_gardens(store.state())) {
+        if garden.bbox.intersects_point(position) {
+            if garden.bbox.left() == next_position.x
+                || garden.bbox.right() == next_position.x
+                || garden.bbox.top() == next_position.y
+                || garden.bbox.bottom() == next_position.y
+            {
+                next_position = position;
+                break;
+            }
+        }
+    }
+
+    if next_position != position {
+        store.dispatch(
+            ChainAction::MovePlayer((next_position, input_device.move_intent)).into(),
+        );
+    }
 }

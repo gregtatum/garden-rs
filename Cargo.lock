@@ -1315,6 +1315,7 @@ dependencies = [
  "rltk",
  "serde",
  "serde_json",
+ "static_assertions",
  "structopt",
  "tempdir",
  "thiserror",

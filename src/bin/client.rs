@@ -1,7 +1,7 @@
 use futures::prelude::*;
 use garden::{
     chain_store::{FsChainStore, HeadRef},
-    Action,
+    ChainAction,
 };
 use libp2p::{
     core::upgrade,

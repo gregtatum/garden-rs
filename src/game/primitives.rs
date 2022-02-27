@@ -1,4 +1,8 @@
+use std::rc::Rc;
+
 use serde::{Deserialize, Serialize};
+
+use crate::State;
 
 pub trait Number:
     // Define all the traits needed for generic numbers.
@@ -23,17 +27,17 @@ impl Number for usize {}
 
 /// A base trait to be implemented by something in the game.
 pub trait Entity: PartialEq {
-    fn position(&self) -> Position;
-    fn bbox(&self) -> BBox<i32> {
+    fn position(&self, state: Rc<State>) -> Position;
+    fn bbox(&self, state: Rc<State>) -> BBox<i32> {
         BBox {
-            top_left: self.position(),
+            top_left: self.position(state),
             size: Size::new(0, 0),
         }
     }
 }
 
 impl Entity for Position {
-    fn position(&self) -> Position {
+    fn position(&self, state: Rc<State>) -> Position {
         self.clone()
     }
 }

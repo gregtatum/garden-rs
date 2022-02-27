@@ -7,7 +7,7 @@ use crate::{garden::GardenPlot, reducers, Action, ChainAction, ChainStore, Hash,
 #[derive(Debug)]
 pub struct Store {
     pub chains: Box<dyn ChainStore<ChainAction>>,
-    pub state: Rc<State>,
+    state: Rc<State>,
 }
 
 impl Store {
@@ -49,10 +49,14 @@ impl Store {
             }
             prev_hash = block.hash.clone();
 
-            self.state = Rc::from(self.state.reduce(&block.payload.data.into()));
+            self.state = Rc::from(self.state.reduce(&block.payload.data.clone().into()));
         }
 
         Ok(())
+    }
+
+    pub fn state(&self) -> Rc<State> {
+        self.state.clone()
     }
 }
 

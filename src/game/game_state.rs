@@ -24,7 +24,7 @@ pub struct GameState {
     input_device: InputDevice,
     input_ui: Option<ui::InputUI>,
     input_handler: ui::InputHandler,
-    state_store: Store,
+    store: Store,
     prev_state: Rc<State>,
 }
 
@@ -38,7 +38,7 @@ impl GameState {
             input_device: InputDevice::new(),
             input_ui: None,
             input_handler: Default::default(),
-            state_store: Store::try_new(chain_store)?,
+            store: Store::try_new(chain_store)?,
             prev_state: Rc::new(State::new()),
         };
 
@@ -50,7 +50,7 @@ impl GameState {
     }
 
     pub fn state(&self) -> Rc<State> {
-        self.state_store.state.clone()
+        self.store.state()
     }
 
     pub fn ask_new_garden(&mut self) {
@@ -74,8 +74,7 @@ impl GameState {
             eprintln!("show_main_menu");
             self.show_main_menu();
         }
-        self.player
-            .update(&self.input_device, &vec![], &self.input_ui);
+        actions::maybe_move_player(&mut self.store, &self.input_device);
         // for garden in &self.gardens {
         //     garden.update();
         // }
@@ -93,11 +92,11 @@ impl GameState {
     pub fn handle_input(&mut self, text: String, ctx: &mut Rltk) {
         match self.input_handler {
             ui::InputHandler::NewGarden => {
-                self.state_store.dispatch(actions::create_garden_plot(text));
+                self.store.dispatch(actions::create_garden_plot(text));
             }
             ui::InputHandler::MainMenu => {
                 if text == "Save" {
-                    self.state_store
+                    self.store
                         .chains
                         .persist()
                         .expect("Failed to store the block chain");
@@ -108,19 +107,19 @@ impl GameState {
         }
     }
 
-    pub fn draw(&mut self, ctx: &mut Rltk) {
+    pub fn draw(&mut self, state: Rc<State>, ctx: &mut Rltk) {
         ctx.cls();
         if let Some(my_garden) = selectors::get_drawable_garden(self.state()) {
-            my_garden.draw(ctx, &*my_garden);
+            my_garden.draw(state.clone(), ctx, &*my_garden);
         }
         // for garden in &self.gardens {
         //     garden.draw(ctx, garden)
         // }
-        self.player.draw(ctx, &self.player);
+        self.player.draw(state.clone(), ctx, &self.player);
         if let Some(ref input_ui) = self.input_ui {
             match input_ui {
-                ui::InputUI::Choices(input) => input.draw(ctx, input),
-                ui::InputUI::TextInput(input) => input.draw(ctx, input),
+                ui::InputUI::Choices(input) => input.draw(state, ctx, input),
+                ui::InputUI::TextInput(input) => input.draw(state, ctx, input),
             }
         }
     }
@@ -133,7 +132,7 @@ impl rltk::GameState for GameState {
             eprintln!("Quitting");
         }
         self.update(ctx);
-        self.draw(ctx);
+        self.draw(self.state(), ctx);
         self.prev_state = self.state();
     }
 }

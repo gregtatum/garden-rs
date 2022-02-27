@@ -7,6 +7,7 @@ use crate::{
     },
     garden::GardenPlot,
     hash::Hash,
+    State,
 };
 
 use rltk::{Rltk, RGB};
@@ -49,23 +50,23 @@ impl DrawableGarden {
 }
 
 impl drawable::Draw for DrawableGarden {
-    fn draw<T: Entity>(&self, ctx: &mut Rltk, _entity: &T) {
-        self.drawable_box.draw(ctx, self);
+    fn draw<T: Entity>(&self, state: Rc<State>, ctx: &mut Rltk, _entity: &T) {
+        self.drawable_box.draw(state.clone(), ctx, self);
         let mut position = self.bbox.top_left;
         position.x += 2;
-        self.drawable_text.draw(ctx, &position);
+        self.drawable_text.draw(state, ctx, &position);
     }
 }
 
 impl Entity for DrawableGarden {
-    fn position<'a>(&'a self) -> Position {
+    fn position<'a>(&'a self, _state: Rc<State>) -> Position {
         Position::new(
             self.bbox.top_left.x + (self.bbox.size.x / 2),
             self.bbox.top_left.y + (self.bbox.size.y / 2),
         )
     }
 
-    fn bbox<'a>(&'a self) -> BBox<i32> {
+    fn bbox<'a>(&'a self, _state: Rc<State>) -> BBox<i32> {
         self.bbox.clone()
     }
 }
