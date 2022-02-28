@@ -1,4 +1,10 @@
-use crate::block_chain::SerializedBytes;
+use crate::{
+    block_chain::SerializedBytes,
+    game::{
+        game_state::{GAME_H, GAME_W},
+        primitives::{BBox, Position, Size},
+    },
+};
 use bincode;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -27,6 +33,14 @@ impl GardenPlot {
 
     pub fn get_dimensions() -> (u16, u16) {
         (10, 10)
+    }
+
+    pub fn get_default_bbox() -> BBox<i32> {
+        let margin = 10;
+        BBox {
+            top_left: Position::new(margin, margin),
+            size: Size::new(GAME_W - margin * 2, GAME_H - margin * 2),
+        }
     }
 }
 

@@ -11,6 +11,7 @@ use crate::{
     State, Store,
 };
 
+#[derive(Debug)]
 pub enum Action {
     Game(GameAction),
     Chain(ChainAction),

@@ -24,6 +24,15 @@ impl Store {
 
     pub fn dispatch(&mut self, action: Action) {
         self.state = Rc::from(self.state.reduce(&action));
+        #[cfg(feature = "store-log")]
+        {
+            if let Action::Chain(ref action) = action {
+                colour::cyan!("[dispatch] ");
+                println!("{:#?}", action);
+                colour::yellow!("[state] ");
+                println!("state {:#?}", *self.state);
+            }
+        }
         if let Action::Chain(action) = action {
             self.chains.add(action);
         }
@@ -50,6 +59,14 @@ impl Store {
             prev_hash = block.hash.clone();
 
             self.state = Rc::from(self.state.reduce(&block.payload.data.clone().into()));
+
+            #[cfg(feature = "store-log")]
+            {
+                colour::cyan!("[load-block] ");
+                println!("{:#?}", block.payload.data.clone());
+                colour::yellow!("[state] ");
+                println!("state {:#?}", *self.state);
+            }
         }
 
         Ok(())

@@ -35,6 +35,13 @@ pub fn move_intent(
 
 pub fn player_position(state: Option<Position>, event: &Action) -> Option<Position> {
     match event {
+        Action::Chain(ChainAction::CreatePlot(plot)) => {
+            if state.is_none() {
+                Some(GardenPlot::get_default_bbox().center())
+            } else {
+                None
+            }
+        }
         Action::Chain(ChainAction::MovePlayer((position, move_intent))) => {
             Some(*position)
         }

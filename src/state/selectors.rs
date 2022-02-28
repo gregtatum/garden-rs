@@ -3,6 +3,7 @@ use crate::{
         drawable::{self, LineType},
         game_state::{GAME_H, GAME_W},
         garden::DrawableGarden,
+        player::Player,
         primitives::{BBox, Entity, Position, Size},
     },
     garden::GardenPlot,
@@ -23,16 +24,29 @@ selector!(
     pub fn get_drawable_garden(state: Rc<State>) -> Option<Rc<DrawableGarden>> {
         memoize |plot: get_my_garden -> Option<Rc<GardenPlot>>| {
             if let Some(ref plot) = plot {
-            let margin = 10;
-            let bbox = BBox {
-                top_left: Position::new(margin, margin),
-                size: Size::new(GAME_W - margin * 2, GAME_H - margin * 2),
-            };
+            eprintln!("Generating empty hash.");
             let todo = Hash::empty();
-            println!("{:?}", bbox);
-            return Some(Rc::from(DrawableGarden::new(bbox, todo, plot.clone())));
+            return Some(Rc::from(DrawableGarden::new(GardenPlot::get_default_bbox(), todo, plot.clone())));
             }
             None
+        }
+    }
+);
+
+fn get_player_is_some(state: Rc<State>) -> bool {
+    state.player_position.is_some()
+}
+
+selector!(
+    pub fn get_drawable_player(state: Rc<State>) -> Option<Rc<Player>> {
+        memoize |
+            is_player: get_player_is_some -> bool
+        | {
+            if is_player {
+                Some(Rc::new(Player::new()))
+            } else {
+                None
+            }
         }
     }
 );

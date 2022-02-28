@@ -20,7 +20,6 @@ pub enum Phase {
 }
 
 pub struct GameState {
-    player: Player,
     input_device: InputDevice,
     input_ui: Option<ui::InputUI>,
     input_handler: ui::InputHandler,
@@ -34,7 +33,6 @@ pub const GAME_H: i32 = 50;
 impl GameState {
     pub fn try_new(chain_store: Box<dyn ChainStore<ChainAction>>) -> Result<Self> {
         let mut game_state = Self {
-            player: Player::new(),
             input_device: InputDevice::new(),
             input_ui: None,
             input_handler: Default::default(),
@@ -69,15 +67,14 @@ impl GameState {
     }
 
     pub fn update(&mut self, ctx: &mut Rltk) {
+        self.store.dispatch(actions::tick_game());
         self.input_device.update(ctx);
         if self.input_ui.is_none() && self.input_device.is_esc {
             eprintln!("show_main_menu");
             self.show_main_menu();
         }
         actions::maybe_move_player(&mut self.store, &self.input_device);
-        // for garden in &self.gardens {
-        //     garden.update();
-        // }
+
         if let Some(ref mut input_ui) = self.input_ui {
             if let Some(text) = match input_ui {
                 ui::InputUI::Choices(input) => input.update(&self.input_device),
@@ -112,10 +109,10 @@ impl GameState {
         if let Some(my_garden) = selectors::get_drawable_garden(self.state()) {
             my_garden.draw(state.clone(), ctx, &*my_garden);
         }
-        // for garden in &self.gardens {
-        //     garden.draw(ctx, garden)
-        // }
-        self.player.draw(state.clone(), ctx, &self.player);
+        if let Some(player) = selectors::get_drawable_player(self.state()) {
+            player.draw(state.clone(), ctx, &*player);
+        }
+
         if let Some(ref input_ui) = self.input_ui {
             match input_ui {
                 ui::InputUI::Choices(input) => input.draw(state, ctx, input),

@@ -97,3 +97,20 @@ pub fn touch(path: &PathBuf) {
         .open(path.clone())
         .expect("Failed to touch path.");
 }
+
+/// Utility to print only once for debugging.
+#[macro_export]
+macro_rules! print_once {
+    ( $($args:tt),* ) => {
+        thread_local! {
+            pub static HAS_PRINTED: std::cell::RefCell<bool> = std::cell::RefCell::new(false);
+        }
+
+        HAS_PRINTED.with(|f| {
+            if *f.borrow() == false {
+                println!( $($args),* );
+                *f.borrow_mut() =  true;
+            }
+        });
+    }
+}

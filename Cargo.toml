@@ -33,6 +33,7 @@ thiserror = "1.0"
 anyhow = "1.0"
 paste = "1.0"
 static_assertions = "1.1"
+colour = "0.6"
 
 [dev-dependencies]
 tempdir = "0.3"
@@ -43,3 +44,5 @@ rand = "0.8"
 [features]
 # Spews a log of cache hit or miss for selectors.
 selector-cache-log = []
+# Spews a log of actions.
+store-log = []
